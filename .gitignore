@@ -1,28 +1,42 @@
-.idea
-.vscode
-*.pyc
-*.npz
-.DS_Store
-._.DS_Store
-*.egg-info
-.pytest_cache/*
-build/
-dist/
-tmp_weights/
-tmp_weights_DELETE/
-store/
-unittest_prediction
-unittest_prediction_fast
-unittest_prediction_roi_subset
-unittest_prediction.nii.gz
-unittest_prediction_fast.nii.gz
-unittest_prediction_fast_body_seg.nii.gz
-unittest_prediction_fast_force_split.nii.gz
+# TotalSegmentator Custom Tools - .gitignore
 
-*.tfstate
-*.tfstate.backup
-*.plan
-.terraform/
-*.pem
+# Large binary files
+*.nii.gz
+*.stl
+*.obj
+*.ply
+
+# Temporary processing directories
+test_output/
+web3d_export/
+temp/
+__pycache__/
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+
+# Python
+*.pyc
+*.pyo
+*.egg-info/
+
+# Logs
 *.log
-*.ipynb
+
+# SSL certificates
+*.pem
+*.key
+*.crt
+*.pfx
+
+# Configuration files with sensitive data
+config.json
+secrets.yml
+
+# Large conversation exports (keep md files but not huge binaries)
+segmentation_preview.png

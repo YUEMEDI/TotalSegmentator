@@ -1,0 +1,24 @@
+tunnel: YOUR_TUNNEL_ID
+credentials-file: C:\Users\YourUser\.cloudflared\YOUR_TUNNEL_ID.json
+
+ingress:
+  # Main TotalSegmentator web app
+  - hostname: totalseg.yourdomain.com
+    service: http://localhost:8000
+    originRequest:
+      noTLSVerify: true
+      
+  # File manager for NAS access
+  - hostname: files.yourdomain.com  
+    service: http://QNAP_IP:8080
+    
+  # Monitoring dashboard
+  - hostname: monitor.yourdomain.com
+    service: http://localhost:9000
+    
+  # Catch-all rule (required)
+  - service: http_status:404
+
+# Optional: Authentication
+warp-routing:
+  enabled: true 
