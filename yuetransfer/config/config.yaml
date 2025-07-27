@@ -1,0 +1,48 @@
+# YueTransfer Configuration File
+
+# Web Server Settings
+WEB_HOST: "0.0.0.0"
+WEB_PORT: 8080
+
+# SFTP Server Settings
+SFTP_HOST: "0.0.0.0"
+SFTP_PORT: 2222
+
+# Database Settings
+SQLALCHEMY_DATABASE_URI: "sqlite:///yuetransfer.db"
+
+# Security Settings
+SECRET_KEY: "change-this-in-production"
+PASSWORD_MIN_LENGTH: 8
+SESSION_TIMEOUT: 3600
+
+# File Upload Settings
+MAX_CONTENT_LENGTH: 17179869184  # 16GB
+ALLOWED_EXTENSIONS:
+  dicom: [".dcm"]
+  nifti: [".nii", ".nii.gz"]
+  archive: [".zip", ".tar", ".tar.gz"]
+  image: [".jpg", ".jpeg", ".png", ".bmp", ".tiff"]
+
+# Storage Settings
+DEFAULT_STORAGE_QUOTA: 107374182400  # 100GB per user
+
+# Logging Settings
+LOG_LEVEL: "INFO"
+LOG_FILE: "app/logs/yuetransfer.log"
+
+# TotalSegmentator Integration
+TOTALSEG_ENABLED: true
+TOTALSEG_INPUT_FOLDER: "app/uploads/selected_for_processing"
+TOTALSEG_OUTPUT_FOLDER: "app/results"
+
+# QNAP NAS Integration (Optional)
+QNAP_ENABLED: false
+QNAP_HOST: ""
+QNAP_USERNAME: ""
+QNAP_PASSWORD: ""
+QNAP_SHARE: ""
+
+# Development Settings
+DEBUG: false
+ENV: "production" 
