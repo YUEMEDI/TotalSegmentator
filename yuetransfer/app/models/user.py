@@ -193,54 +193,31 @@ class UserManager:
             self.db.session.rollback()
             raise e
     
-    def change_password(self, user_id, old_password, new_password):
-        """Change user password"""
-        try:
-            user = self.get_user_by_id(user_id)
-            if not user:
-                raise ValueError("User not found")
-            
-            if not user.check_password(old_password):
-                raise ValueError("Invalid current password")
-            
-            user.set_password(new_password)
-            self.db.session.commit()
-            return True
-        except Exception as e:
-            self.db.session.rollback()
-            raise e
-    
     def delete_user(self, user_id):
-        """Delete user and their files"""
+        """Delete a user and their files"""
         try:
             user = self.get_user_by_id(user_id)
             if not user:
                 raise ValueError("User not found")
             
             # Delete user files
-            self._delete_user_files(user)
+            import shutil
+            user_upload_path = user.get_upload_path()
+            user_results_path = user.get_results_path()
+            
+            if os.path.exists(user_upload_path):
+                shutil.rmtree(user_upload_path)
+            if os.path.exists(user_results_path):
+                shutil.rmtree(user_results_path)
             
             # Delete user from database
             self.db.session.delete(user)
             self.db.session.commit()
+            
             return True
         except Exception as e:
             self.db.session.rollback()
             raise e
-    
-    def _delete_user_files(self, user):
-        """Delete all files belonging to user"""
-        import shutil
-        from app.config import Config
-        
-        config = Config()
-        user_upload_path = config.get_upload_path(user.username)
-        user_results_path = config.get_results_path(user.username)
-        
-        # Delete user directories
-        for path in [user_upload_path, user_results_path]:
-            if os.path.exists(path):
-                shutil.rmtree(path)
     
     def get_all_users(self, include_inactive=False):
         """Get all users"""
@@ -249,33 +226,114 @@ class UserManager:
             query = query.filter_by(is_active=True)
         return query.all()
     
-    def get_admin_users(self):
-        """Get all admin users"""
-        return User.query.filter_by(is_admin=True, is_active=True).all()
-    
-    def get_user_stats(self):
+    def get_user_stats(self, user_id):
         """Get user statistics"""
-        total_users = User.query.count()
-        active_users = User.query.filter_by(is_active=True).count()
-        admin_users = User.query.filter_by(is_admin=True, is_active=True).count()
+        user = self.get_user_by_id(user_id)
+        if not user:
+            return None
         
-        total_storage = db.session.query(db.func.sum(User.storage_used)).scalar() or 0
+        upload_path = user.get_upload_path()
+        results_path = user.get_results_path()
         
-        return {
-            'total_users': total_users,
-            'active_users': active_users,
-            'admin_users': admin_users,
-            'total_storage_used': total_storage
+        stats = {
+            'total_files': 0,
+            'dicom_files': 0,
+            'nifti_files': 0,
+            'archive_files': 0,
+            'storage_used': user.storage_used,
+            'storage_quota': user.storage_quota,
+            'storage_percentage': user.get_storage_usage_percentage()
         }
+        
+        # Count files by type
+        if os.path.exists(upload_path):
+            for root, dirs, files in os.walk(upload_path):
+                for file in files:
+                    stats['total_files'] += 1
+                    ext = file.lower().split('.')[-1]
+                    
+                    if ext == 'dcm':
+                        stats['dicom_files'] += 1
+                    elif ext in ['nii', 'gz']:
+                        stats['nifti_files'] += 1
+                    elif ext in ['zip', 'tar']:
+                        stats['archive_files'] += 1
+        
+        return stats
     
-    def search_users(self, query, limit=50):
-        """Search users by username or email"""
-        return User.query.filter(
-            db.or_(
-                User.username.ilike(f'%{query}%'),
-                User.email.ilike(f'%{query}%')
-            )
-        ).limit(limit).all()
+    def calculate_storage_usage(self, user_id):
+        """Calculate and update user storage usage"""
+        user = self.get_user_by_id(user_id)
+        if not user:
+            return None
+        
+        total_size = 0
+        upload_path = user.get_upload_path()
+        results_path = user.get_results_path()
+        
+        # Calculate upload folder size
+        if os.path.exists(upload_path):
+            for root, dirs, files in os.walk(upload_path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    if os.path.exists(file_path):
+                        total_size += os.path.getsize(file_path)
+        
+        # Calculate results folder size
+        if os.path.exists(results_path):
+            for root, dirs, files in os.walk(results_path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    if os.path.exists(file_path):
+                        total_size += os.path.getsize(file_path)
+        
+        # Update user storage
+        user.storage_used = total_size
+        self.db.session.commit()
+        
+        return total_size
+
+class ProcessingJob(db.Model):
+    """Model for tracking TotalSegmentator processing jobs"""
+    
+    __tablename__ = 'processing_jobs'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    job_name = db.Column(db.String(255), nullable=False)
+    input_files = db.Column(db.Text, nullable=False)  # JSON string of file paths
+    output_path = db.Column(db.String(500), nullable=True)
+    status = db.Column(db.String(50), default='pending')  # pending, processing, completed, failed
+    progress = db.Column(db.Float, default=0.0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    started_at = db.Column(db.DateTime, nullable=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    error_message = db.Column(db.Text, nullable=True)
+    
+    # TotalSegmentator settings
+    task = db.Column(db.String(100), default='total')
+    fast_mode = db.Column(db.Boolean, default=False)
+    preview = db.Column(db.Boolean, default=False)
+    
+    # Relationship
+    user = db.relationship('User', backref=db.backref('processing_jobs', lazy=True))
+    
+    def to_dict(self):
+        """Convert job to dictionary"""
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'job_name': self.job_name,
+            'status': self.status,
+            'progress': self.progress,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'started_at': self.started_at.isoformat() if self.started_at else None,
+            'completed_at': self.completed_at.isoformat() if self.completed_at else None,
+            'error_message': self.error_message,
+            'task': self.task,
+            'fast_mode': self.fast_mode,
+            'preview': self.preview
+        }
 
 def create_default_admin():
     """Create default admin user if none exists"""

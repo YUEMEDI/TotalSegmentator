@@ -3,17 +3,17 @@ echo ========================================
 echo YUETRANSFER ENVIRONMENT SETUP
 echo ========================================
 
-REM Set Miniconda path
-set CONDA_PATH=D:\ProgramData\miniconda3\Scripts\conda.exe
+REM Set Anaconda path
+set CONDA_PATH=D:\anaconda3\Scripts\conda.exe
 
-REM Add Miniconda to PATH for this session
-set PATH=%PATH%;D:\ProgramData\miniconda3;D:\ProgramData\miniconda3\Scripts;D:\ProgramData\miniconda3\Library\bin
+REM Add Anaconda to PATH for this session
+set PATH=%PATH%;D:\anaconda3;D:\anaconda3\Scripts;D:\anaconda3\Library\bin
 
 echo Checking conda installation...
 "%CONDA_PATH%" --version
 if errorlevel 1 (
     echo ERROR: Conda not found at %CONDA_PATH%
-    echo Please install Miniconda to D:\ProgramData\miniconda3
+    echo Please verify Anaconda installation at D:\anaconda3
     pause
     exit /b 1
 )
@@ -49,5 +49,7 @@ echo Next steps:
 echo 1. Run start_totalsegmentator.bat
 echo 2. Run python init_db.py
 echo 3. Run yueserver.bat to start the server
+echo.
+echo NOTE: Run 'python yuecheck.py' first to verify system compatibility!
 echo.
 pause 

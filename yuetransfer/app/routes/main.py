@@ -2,428 +2,315 @@
 YueTransfer Main Routes
 """
 
-from flask import Blueprint, render_template, request, jsonify, flash, redirect, url_for, current_app
-from flask_login import login_required, current_user
-from werkzeug.utils import secure_filename
 import os
 import json
-from datetime import datetime, timedelta
-from pathlib import Path
+from datetime import datetime
+from flask import Blueprint, render_template, request, redirect, url_for, flash, send_file, current_app
+from flask_login import login_required, current_user
+from werkzeug.utils import secure_filename
 
-from app.models.user import UserManager
-from app.utils.file_manager import FileManager
-from app.utils.stats import get_user_stats, get_system_stats
+from app.models.user import UserManager, ProcessingJob
+from app.utils.auth import get_user_permissions
+from app.utils.file_manager import FileManager, get_file_stats, get_recent_files
+from app import db
 
 main_bp = Blueprint('main', __name__)
 
 @main_bp.route('/')
+@main_bp.route('/dashboard')
 @login_required
 def dashboard():
-    """Main dashboard page"""
+    """Main dashboard"""
     try:
         # Get user statistics
-        stats = get_user_stats(current_user.id)
+        user_manager = UserManager()
+        user_stats = user_manager.get_user_stats(current_user.id)
         
         # Get recent files
-        file_manager = FileManager(current_user.username)
-        recent_files = file_manager.get_recent_files(limit=10)
+        recent_files = get_recent_files(current_user.get_upload_path(), limit=5)
         
-        # Get system statistics
-        system_stats = get_system_stats()
+        # Format stats for display
+        if user_stats:
+            user_stats['storage_used'] = format_file_size(user_stats['storage_used'])
+            user_stats['storage_quota'] = format_file_size(user_stats['storage_quota'])
         
-        return render_template('dashboard.html', 
-                             stats=stats,
+        # Get processing jobs
+        processing_jobs = ProcessingJob.query.filter_by(user_id=current_user.id).filter(
+            ProcessingJob.status.in_(['pending', 'processing'])
+        ).count()
+        
+        user_stats['processing_jobs'] = processing_jobs
+        
+        return render_template('main/dashboard.html', 
+                             stats=user_stats,
                              recent_files=recent_files,
-                             system_stats=system_stats)
+                             config=current_app.config)
+    
     except Exception as e:
         flash(f'Error loading dashboard: {str(e)}', 'error')
-        return render_template('dashboard.html', 
-                             stats={},
+        return render_template('main/dashboard.html', 
+                             stats={}, 
                              recent_files=[],
-                             system_stats={})
+                             config=current_app.config)
 
 @main_bp.route('/files')
+@main_bp.route('/files/<path:path>')
 @login_required
-def file_browser():
-    """File browser page"""
+def file_browser(path=''):
+    """File browser interface"""
     try:
-        path = request.args.get('path', '')
         file_manager = FileManager(current_user.username)
         
-        # Get files and directories
-        files = file_manager.list_files(path)
+        # Get current directory contents
+        current_path = os.path.join(current_user.get_upload_path(), path) if path else current_user.get_upload_path()
         
-        # Get breadcrumb navigation
-        breadcrumbs = file_manager.get_breadcrumbs(path)
+        if not os.path.exists(current_path) or not current_path.startswith(current_user.get_upload_path()):
+            flash('Directory not found or access denied.', 'error')
+            return redirect(url_for('main.file_browser'))
         
-        return render_template('file_browser.html',
-                             files=files,
+        # Get directory contents
+        contents = file_manager.list_directory(current_path)
+        breadcrumbs = _get_breadcrumbs(path)
+        
+        return render_template('main/file_browser.html',
+                             contents=contents,
                              current_path=path,
                              breadcrumbs=breadcrumbs)
+    
     except Exception as e:
-        flash(f'Error loading file browser: {str(e)}', 'error')
-        return render_template('file_browser.html',
-                             files=[],
+        flash(f'Error browsing files: {str(e)}', 'error')
+        return render_template('main/file_browser.html',
+                             contents=[],
                              current_path='',
                              breadcrumbs=[])
 
-@main_bp.route('/upload')
+@main_bp.route('/upload', methods=['GET', 'POST'])
 @login_required
 def upload():
-    """File upload page"""
-    try:
-        # Get user storage info
-        user_stats = get_user_stats(current_user.id)
+    """File upload interface"""
+    if request.method == 'POST':
+        try:
+            # Handle file uploads
+            uploaded_files = request.files.getlist('files[]')
+            
+            if not uploaded_files or not uploaded_files[0].filename:
+                flash('No files selected for upload.', 'error')
+                return redirect(url_for('main.upload'))
+            
+            file_manager = FileManager(current_user.username)
+            upload_results = []
+            
+            for file in uploaded_files:
+                if file.filename:
+                    try:
+                        result = file_manager.save_uploaded_file(file)
+                        upload_results.append(result)
+                    except Exception as e:
+                        flash(f'Error uploading {file.filename}: {str(e)}', 'error')
+            
+            if upload_results:
+                flash(f'Successfully uploaded {len(upload_results)} file(s).', 'success')
+                return redirect(url_for('main.file_browser'))
         
-        return render_template('upload.html', user_stats=user_stats)
-    except Exception as e:
-        flash(f'Error loading upload page: {str(e)}', 'error')
-        return render_template('upload.html', user_stats={})
-
-@main_bp.route('/sftp-info')
-@login_required
-def sftp_info():
-    """SFTP connection information page"""
-    try:
-        from app.config import Config
-        config = Config()
-        
-        sftp_info = {
-            'host': config.SFTP_HOST,
-            'port': config.SFTP_PORT,
-            'username': current_user.username,
-            'protocol': 'SFTP (SSH File Transfer Protocol)'
-        }
-        
-        return render_template('sftp_info.html', sftp_info=sftp_info)
-    except Exception as e:
-        flash(f'Error loading SFTP info: {str(e)}', 'error')
-        return render_template('sftp_info.html', sftp_info={})
+        except Exception as e:
+            flash(f'Upload error: {str(e)}', 'error')
+    
+    # Get user storage info
+    user_manager = UserManager()
+    user_stats = user_manager.get_user_stats(current_user.id)
+    
+    return render_template('main/upload.html', user_stats=user_stats)
 
 @main_bp.route('/process-files')
 @login_required
 def process_files():
-    """File processing page for TotalSegmentator integration"""
+    """TotalSegmentator processing interface"""
     try:
+        # Get user's files that can be processed
         file_manager = FileManager(current_user.username)
-        
-        # Get files that can be processed
         processable_files = file_manager.get_processable_files()
         
-        # Get processing history
-        processing_history = file_manager.get_processing_history()
+        # Get processing jobs
+        processing_jobs = ProcessingJob.query.filter_by(user_id=current_user.id).order_by(
+            ProcessingJob.created_at.desc()
+        ).limit(20).all()
         
-        return render_template('process_files.html',
+        return render_template('main/process_files.html',
                              processable_files=processable_files,
-                             processing_history=processing_history)
+                             processing_jobs=processing_jobs)
+    
     except Exception as e:
-        flash(f'Error loading process files page: {str(e)}', 'error')
-        return render_template('process_files.html',
+        flash(f'Error loading processing interface: {str(e)}', 'error')
+        return render_template('main/process_files.html',
                              processable_files=[],
-                             processing_history=[])
-
-@main_bp.route('/profile')
-@login_required
-def profile():
-    """User profile page"""
-    try:
-        user_manager = UserManager()
-        user_data = current_user.to_dict()
-        
-        return render_template('profile.html', user=user_data)
-    except Exception as e:
-        flash(f'Error loading profile: {str(e)}', 'error')
-        return render_template('profile.html', user={})
+                             processing_jobs=[])
 
 @main_bp.route('/results')
+@main_bp.route('/results/<path:path>')
 @login_required
-def results():
-    """Processing results page"""
+def results(path=''):
+    """View processing results"""
     try:
-        file_manager = FileManager(current_user.username)
+        results_path = os.path.join(current_user.get_results_path(), path) if path else current_user.get_results_path()
         
-        # Get processing results
-        results = file_manager.get_processing_results()
-        
-        return render_template('results.html', results=results)
-    except Exception as e:
-        flash(f'Error loading results: {str(e)}', 'error')
-        return render_template('results.html', results=[])
-
-# API Routes
-@main_bp.route('/api/stats')
-@login_required
-def api_stats():
-    """Get user statistics"""
-    try:
-        stats = get_user_stats(current_user.id)
-        return jsonify(stats)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@main_bp.route('/api/files')
-@login_required
-def api_files():
-    """Get file list for AJAX requests"""
-    try:
-        path = request.args.get('path', '')
-        file_manager = FileManager(current_user.username)
-        files = file_manager.list_files(path)
-        
-        return render_template('partials/file_list.html', files=files, current_path=path)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@main_bp.route('/api/file-tree')
-@login_required
-def api_file_tree():
-    """Get file tree for dashboard"""
-    try:
-        file_manager = FileManager(current_user.username)
-        file_tree = file_manager.get_file_tree(depth=3)
-        
-        return render_template('partials/file_tree.html', file_tree=file_tree)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@main_bp.route('/api/upload', methods=['POST'])
-@login_required
-def api_upload():
-    """Handle file upload"""
-    try:
-        if 'files[]' not in request.files:
-            return jsonify({'error': 'No files provided'}), 400
-        
-        files = request.files.getlist('files[]')
-        if not files or all(file.filename == '' for file in files):
-            return jsonify({'error': 'No files selected'}), 400
+        if not os.path.exists(results_path) or not results_path.startswith(current_user.get_results_path()):
+            flash('Results directory not found or access denied.', 'error')
+            return redirect(url_for('main.results'))
         
         file_manager = FileManager(current_user.username)
-        uploaded_files = []
+        contents = file_manager.list_directory(results_path)
+        breadcrumbs = _get_breadcrumbs(path, base_url='main.results')
         
-        for file in files:
-            if file and file.filename:
-                try:
-                    # Check file size
-                    file.seek(0, 2)  # Seek to end
-                    file_size = file.tell()
-                    file.seek(0)  # Reset to beginning
-                    
-                    if not current_user.can_upload_file(file_size):
-                        return jsonify({'error': f'Storage quota exceeded for file {file.filename}'}), 400
-                    
-                    # Upload file
-                    result = file_manager.upload_file(file)
-                    uploaded_files.append(result)
-                    
-                    # Update user storage usage
-                    current_user.add_storage_usage(file_size)
-                    
-                except Exception as e:
-                    return jsonify({'error': f'Failed to upload {file.filename}: {str(e)}'}), 500
-        
-        return jsonify({
-            'message': f'Successfully uploaded {len(uploaded_files)} files',
-            'files': uploaded_files
-        })
-        
+        return render_template('main/results.html',
+                             contents=contents,
+                             current_path=path,
+                             breadcrumbs=breadcrumbs)
+    
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        flash(f'Error browsing results: {str(e)}', 'error')
+        return render_template('main/results.html',
+                             contents=[],
+                             current_path='',
+                             breadcrumbs=[])
 
-@main_bp.route('/api/delete-files', methods=['DELETE'])
+@main_bp.route('/sftp-info')
 @login_required
-def api_delete_files():
-    """Delete selected files"""
-    try:
-        data = request.get_json()
-        if not data or 'files' not in data:
-            return jsonify({'error': 'No files specified'}), 400
-        
-        file_manager = FileManager(current_user.username)
-        deleted_files = []
-        
-        for file_path in data['files']:
-            try:
-                file_size = file_manager.get_file_size(file_path)
-                file_manager.delete_file(file_path)
-                deleted_files.append(file_path)
-                
-                # Update user storage usage
-                if file_size:
-                    current_user.remove_storage_usage(file_size)
-                    
-            except Exception as e:
-                return jsonify({'error': f'Failed to delete {file_path}: {str(e)}'}), 500
-        
-        return jsonify({
-            'message': f'Successfully deleted {len(deleted_files)} files',
-            'deleted_files': deleted_files
-        })
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+def sftp_info():
+    """SFTP connection information"""
+    sftp_config = {
+        'host': current_app.config.get('SFTP_HOST', 'localhost'),
+        'port': current_app.config.get('SFTP_PORT', 2222),
+        'username': current_user.username,
+        'protocol': 'SFTP (SSH File Transfer Protocol)'
+    }
+    
+    # Generate connection strings for different clients
+    connection_strings = {
+        'command_line': f'sftp -P {sftp_config["port"]} {sftp_config["username"]}@{sftp_config["host"]}',
+        'filezilla': f'sftp://{sftp_config["username"]}@{sftp_config["host"]}:{sftp_config["port"]}',
+        'winscp': f'{sftp_config["host"]}:{sftp_config["port"]}',
+    }
+    
+    return render_template('main/sftp_info.html',
+                         sftp_config=sftp_config,
+                         connection_strings=connection_strings)
 
-@main_bp.route('/api/process-files', methods=['POST'])
+@main_bp.route('/download/<path:filepath>')
 @login_required
-def api_process_files():
-    """Send files to TotalSegmentator for processing"""
-    try:
-        data = request.get_json()
-        if not data or 'files' not in data:
-            return jsonify({'error': 'No files specified'}), 400
-        
-        file_manager = FileManager(current_user.username)
-        
-        # Move files to processing directory
-        processed_files = []
-        for file_path in data['files']:
-            try:
-                result = file_manager.move_to_processing(file_path)
-                processed_files.append(result)
-            except Exception as e:
-                return jsonify({'error': f'Failed to process {file_path}: {str(e)}'}), 500
-        
-        # Start TotalSegmentator processing (background task)
-        try:
-            from app.utils.totalsegmentator import start_processing
-            job_id = start_processing(current_user.username, processed_files)
-            
-            return jsonify({
-                'message': f'Started processing {len(processed_files)} files',
-                'job_id': job_id,
-                'processed_files': processed_files
-            })
-            
-        except Exception as e:
-            return jsonify({'error': f'Failed to start processing: {str(e)}'}), 500
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@main_bp.route('/api/download/<path:file_path>')
-@login_required
-def api_download(file_path):
+def download_file(filepath):
     """Download a file"""
     try:
-        file_manager = FileManager(current_user.username)
-        return file_manager.download_file(file_path)
+        # Construct full file path
+        full_path = os.path.join(current_user.get_upload_path(), filepath)
+        
+        # Security check: ensure file is within user's directory
+        if not full_path.startswith(current_user.get_upload_path()):
+            flash('Access denied.', 'error')
+            return redirect(url_for('main.file_browser'))
+        
+        if not os.path.exists(full_path) or not os.path.isfile(full_path):
+            flash('File not found.', 'error')
+            return redirect(url_for('main.file_browser'))
+        
+        return send_file(full_path, as_attachment=True)
+    
     except Exception as e:
-        flash(f'Download failed: {str(e)}', 'error')
+        flash(f'Error downloading file: {str(e)}', 'error')
         return redirect(url_for('main.file_browser'))
 
-@main_bp.route('/api/preview/<path:file_path>')
+@main_bp.route('/download-results/<path:filepath>')
 @login_required
-def api_preview(file_path):
-    """Preview a file (if supported)"""
+def download_results(filepath):
+    """Download a results file"""
     try:
-        file_manager = FileManager(current_user.username)
-        return file_manager.preview_file(file_path)
+        # Construct full file path
+        full_path = os.path.join(current_user.get_results_path(), filepath)
+        
+        # Security check: ensure file is within user's results directory
+        if not full_path.startswith(current_user.get_results_path()):
+            flash('Access denied.', 'error')
+            return redirect(url_for('main.results'))
+        
+        if not os.path.exists(full_path) or not os.path.isfile(full_path):
+            flash('File not found.', 'error')
+            return redirect(url_for('main.results'))
+        
+        return send_file(full_path, as_attachment=True)
+    
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        flash(f'Error downloading file: {str(e)}', 'error')
+        return redirect(url_for('main.results'))
 
-@main_bp.route('/api/create-folder', methods=['POST'])
+@main_bp.route('/create-folder', methods=['POST'])
 @login_required
-def api_create_folder():
+def create_folder():
     """Create a new folder"""
     try:
-        data = request.get_json()
-        if not data or 'name' not in data:
-            return jsonify({'error': 'Folder name required'}), 400
+        folder_name = request.form.get('folder_name', '').strip()
+        current_path = request.form.get('current_path', '')
         
-        folder_name = data['name']
-        current_path = data.get('path', '')
+        if not folder_name:
+            flash('Folder name is required.', 'error')
+            return redirect(url_for('main.file_browser', path=current_path))
         
-        file_manager = FileManager(current_user.username)
-        result = file_manager.create_folder(folder_name, current_path)
+        # Sanitize folder name
+        folder_name = secure_filename(folder_name)
         
-        return jsonify({
-            'message': f'Folder "{folder_name}" created successfully',
-            'folder': result
-        })
+        if not folder_name:
+            flash('Invalid folder name.', 'error')
+            return redirect(url_for('main.file_browser', path=current_path))
         
+        # Create folder path
+        base_path = os.path.join(current_user.get_upload_path(), current_path) if current_path else current_user.get_upload_path()
+        new_folder_path = os.path.join(base_path, folder_name)
+        
+        # Security check
+        if not new_folder_path.startswith(current_user.get_upload_path()):
+            flash('Access denied.', 'error')
+            return redirect(url_for('main.file_browser', path=current_path))
+        
+        if os.path.exists(new_folder_path):
+            flash('Folder already exists.', 'error')
+            return redirect(url_for('main.file_browser', path=current_path))
+        
+        os.makedirs(new_folder_path)
+        flash(f'Folder "{folder_name}" created successfully.', 'success')
+        
+        return redirect(url_for('main.file_browser', path=current_path))
+    
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        flash(f'Error creating folder: {str(e)}', 'error')
+        return redirect(url_for('main.file_browser'))
 
-@main_bp.route('/api/rename', methods=['POST'])
-@login_required
-def api_rename():
-    """Rename a file or folder"""
-    try:
-        data = request.get_json()
-        if not data or 'old_name' not in data or 'new_name' not in data:
-            return jsonify({'error': 'Old and new names required'}), 400
+# Utility functions
+def _get_breadcrumbs(path, base_url='main.file_browser'):
+    """Generate breadcrumb navigation"""
+    breadcrumbs = [{'name': 'Home', 'path': '', 'url': url_for(base_url)}]
+    
+    if path:
+        parts = path.split('/')
+        current_path = ''
         
-        old_name = data['old_name']
-        new_name = data['new_name']
-        current_path = data.get('path', '')
-        
-        file_manager = FileManager(current_user.username)
-        result = file_manager.rename_file(old_name, new_name, current_path)
-        
-        return jsonify({
-            'message': f'Renamed "{old_name}" to "{new_name}"',
-            'result': result
-        })
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        for part in parts:
+            if part:
+                current_path = os.path.join(current_path, part).replace('\\', '/')
+                breadcrumbs.append({
+                    'name': part,
+                    'path': current_path,
+                    'url': url_for(base_url, path=current_path)
+                })
+    
+    return breadcrumbs
 
-@main_bp.route('/api/copy', methods=['POST'])
-@login_required
-def api_copy():
-    """Copy files"""
-    try:
-        data = request.get_json()
-        if not data or 'files' not in data or 'destination' not in data:
-            return jsonify({'error': 'Files and destination required'}), 400
-        
-        files = data['files']
-        destination = data['destination']
-        
-        file_manager = FileManager(current_user.username)
-        copied_files = []
-        
-        for file_path in files:
-            try:
-                result = file_manager.copy_file(file_path, destination)
-                copied_files.append(result)
-            except Exception as e:
-                return jsonify({'error': f'Failed to copy {file_path}: {str(e)}'}), 500
-        
-        return jsonify({
-            'message': f'Successfully copied {len(copied_files)} files',
-            'copied_files': copied_files
-        })
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@main_bp.route('/api/move', methods=['POST'])
-@login_required
-def api_move():
-    """Move files"""
-    try:
-        data = request.get_json()
-        if not data or 'files' not in data or 'destination' not in data:
-            return jsonify({'error': 'Files and destination required'}), 400
-        
-        files = data['files']
-        destination = data['destination']
-        
-        file_manager = FileManager(current_user.username)
-        moved_files = []
-        
-        for file_path in files:
-            try:
-                result = file_manager.move_file(file_path, destination)
-                moved_files.append(result)
-            except Exception as e:
-                return jsonify({'error': f'Failed to move {file_path}: {str(e)}'}), 500
-        
-        return jsonify({
-            'message': f'Successfully moved {len(moved_files)} files',
-            'moved_files': moved_files
-        })
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500 
+def format_file_size(size_bytes):
+    """Format file size in human readable format"""
+    if size_bytes == 0:
+        return "0 B"
+    
+    size_names = ["B", "KB", "MB", "GB", "TB"]
+    import math
+    i = int(math.floor(math.log(size_bytes, 1024)))
+    p = math.pow(1024, i)
+    s = round(size_bytes / p, 2)
+    
+    return f"{s} {size_names[i]}" 

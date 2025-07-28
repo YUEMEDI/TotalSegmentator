@@ -3,17 +3,17 @@ echo ========================================
 echo YUETRANSFER WEB SERVER STARTUP
 echo ========================================
 
-REM Set Miniconda path
-set CONDA_PATH=D:\ProgramData\miniconda3\Scripts\conda.exe
+REM Set Anaconda path
+set CONDA_PATH=D:\anaconda3\Scripts\conda.exe
 
-REM Add Miniconda to PATH for this session
-set PATH=%PATH%;D:\ProgramData\miniconda3;D:\ProgramData\miniconda3\Scripts;D:\ProgramData\miniconda3\Library\bin
+REM Add Anaconda to PATH for this session
+set PATH=%PATH%;D:\anaconda3;D:\anaconda3\Scripts;D:\anaconda3\Library\bin
 
 echo Checking conda installation...
 "%CONDA_PATH%" --version
 if errorlevel 1 (
     echo ERROR: Conda not found at %CONDA_PATH%
-    echo Please install Miniconda to D:\ProgramData\miniconda3
+    echo Please verify Anaconda installation at D:\anaconda3
     pause
     exit /b 1
 )

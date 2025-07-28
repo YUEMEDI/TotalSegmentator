@@ -1,18 +1,14 @@
 """
 YueTransfer File Manager Utility
+Handles all file operations for users
 """
 
 import os
 import shutil
-import zipfile
-import tarfile
-import magic
 import mimetypes
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from werkzeug.utils import secure_filename
-import logging
-
 from app.config import Config
 
 class FileManager:
@@ -25,9 +21,9 @@ class FileManager:
         self.results_path = self.config.get_results_path(username)
         
         # Ensure user directories exist
-        self._ensure_user_directories()
+        self._ensure_directories()
     
-    def _ensure_user_directories(self):
+    def _ensure_directories(self):
         """Ensure user directories exist"""
         directories = [
             self.upload_path,
@@ -41,111 +37,342 @@ class FileManager:
         for directory in directories:
             os.makedirs(directory, exist_ok=True)
     
-    def upload_file(self, file):
-        """Upload a file to user's directory"""
+    def list_directory(self, directory_path):
+        """List contents of a directory"""
         try:
+            if not os.path.exists(directory_path) or not os.path.isdir(directory_path):
+                return []
+            
+            contents = []
+            
+            for item in os.listdir(directory_path):
+                item_path = os.path.join(directory_path, item)
+                
+                try:
+                    stat_info = os.stat(item_path)
+                    is_directory = os.path.isdir(item_path)
+                    
+                    # Get file type and icon
+                    file_type = self._get_file_type(item) if not is_directory else 'folder'
+                    icon = self._get_file_icon(file_type)
+                    
+                    # Format file size
+                    size = 0 if is_directory else stat_info.st_size
+                    size_formatted = self._format_file_size(size)
+                    
+                    # Format modification time
+                    modified_time = datetime.fromtimestamp(stat_info.st_mtime)
+                    modified_formatted = modified_time.strftime('%Y-%m-%d %H:%M:%S')
+                    
+                    contents.append({
+                        'name': item,
+                        'type': file_type,
+                        'icon': icon,
+                        'is_directory': is_directory,
+                        'size': size,
+                        'size_formatted': size_formatted,
+                        'modified': modified_time,
+                        'modified_formatted': modified_formatted,
+                        'path': os.path.relpath(item_path, self.upload_path).replace('\\', '/'),
+                        'can_preview': self._can_preview(item) if not is_directory else False
+                    })
+                    
+                except (OSError, IOError):
+                    continue
+            
+            # Sort: directories first, then files, both alphabetically
+            contents.sort(key=lambda x: (not x['is_directory'], x['name'].lower()))
+            
+            return contents
+            
+        except Exception as e:
+            print(f"Error listing directory {directory_path}: {e}")
+            return []
+    
+    def save_uploaded_file(self, file):
+        """Save an uploaded file"""
+        try:
+            if not file or not file.filename:
+                raise ValueError("No file provided")
+            
+            # Secure the filename
             filename = secure_filename(file.filename)
             if not filename:
                 raise ValueError("Invalid filename")
             
             # Determine target directory based on file type
-            target_dir = self._get_target_directory(filename)
-            target_path = os.path.join(target_dir, filename)
+            file_type = self._get_file_type(filename)
+            target_dir = self._get_target_directory(file_type)
+            
+            # Ensure target directory exists
+            os.makedirs(target_dir, exist_ok=True)
             
             # Handle duplicate filenames
-            target_path = self._get_unique_filename(target_path)
+            file_path = os.path.join(target_dir, filename)
+            if os.path.exists(file_path):
+                base, ext = os.path.splitext(filename)
+                counter = 1
+                while os.path.exists(file_path):
+                    new_filename = f"{base}_{counter}{ext}"
+                    file_path = os.path.join(target_dir, new_filename)
+                    counter += 1
+                filename = os.path.basename(file_path)
             
-            # Save file
-            file.save(target_path)
+            # Save the file
+            file.save(file_path)
             
-            # Get file info
-            file_info = self._get_file_info(target_path)
-            
-            logging.info(f"File uploaded: {target_path} by user {self.username}")
-            return file_info
-            
-        except Exception as e:
-            logging.error(f"Upload failed for user {self.username}: {e}")
-            raise
-    
-    def _get_target_directory(self, filename):
-        """Get target directory based on file type"""
-        ext = filename.lower().split('.')[-1]
-        
-        if ext in ['dcm']:
-            return os.path.join(self.upload_path, 'dicom_datasets')
-        elif ext in ['nii', 'gz']:
-            return os.path.join(self.upload_path, 'nifti_files')
-        elif ext in ['zip', 'tar', 'gz']:
-            return os.path.join(self.upload_path, 'archives')
-        else:
-            return self.upload_path
-    
-    def _get_unique_filename(self, filepath):
-        """Get unique filename if file already exists"""
-        if not os.path.exists(filepath):
-            return filepath
-        
-        base, ext = os.path.splitext(filepath)
-        counter = 1
-        
-        while os.path.exists(f"{base}_{counter}{ext}"):
-            counter += 1
-        
-        return f"{base}_{counter}{ext}"
-    
-    def _get_file_info(self, filepath):
-        """Get file information"""
-        try:
-            stat = os.stat(filepath)
-            filename = os.path.basename(filepath)
-            file_type = self._get_file_type(filename)
+            # Get file information
+            stat_info = os.stat(file_path)
             
             return {
-                'name': filename,
-                'path': os.path.relpath(filepath, self.upload_path),
-                'size': stat.st_size,
-                'size_formatted': self._format_file_size(stat.st_size),
+                'filename': filename,
+                'original_filename': file.filename,
+                'path': os.path.relpath(file_path, self.upload_path).replace('\\', '/'),
+                'size': stat_info.st_size,
+                'size_formatted': self._format_file_size(stat_info.st_size),
                 'type': file_type,
-                'modified': datetime.fromtimestamp(stat.st_mtime),
-                'modified_ago': self._time_ago(stat.st_mtime),
-                'is_directory': os.path.isdir(filepath),
-                'mime_type': self._get_mime_type(filepath)
+                'uploaded_at': datetime.now().isoformat()
             }
+            
         except Exception as e:
-            logging.error(f"Error getting file info for {filepath}: {e}")
-            return None
+            raise Exception(f"Failed to save uploaded file: {str(e)}")
+    
+    def get_processable_files(self):
+        """Get files that can be processed by TotalSegmentator"""
+        processable_files = []
+        processable_extensions = ['.nii', '.nii.gz', '.dcm']
+        
+        try:
+            for root, dirs, files in os.walk(self.upload_path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    
+                    # Check if file has processable extension
+                    is_processable = any(file.lower().endswith(ext) for ext in processable_extensions)
+                    
+                    if is_processable:
+                        try:
+                            stat_info = os.stat(file_path)
+                            relative_path = os.path.relpath(file_path, self.upload_path).replace('\\', '/')
+                            
+                            processable_files.append({
+                                'name': file,
+                                'path': relative_path,
+                                'size': stat_info.st_size,
+                                'size_formatted': self._format_file_size(stat_info.st_size),
+                                'type': self._get_file_type(file),
+                                'modified': datetime.fromtimestamp(stat_info.st_mtime).isoformat()
+                            })
+                        except OSError:
+                            continue
+            
+            return processable_files
+            
+        except Exception as e:
+            print(f"Error getting processable files: {e}")
+            return []
+    
+    def get_file_tree(self, max_depth=3):
+        """Get file tree structure for navigation"""
+        try:
+            return self._build_tree(self.upload_path, '', max_depth, 0)
+        except Exception as e:
+            print(f"Error building file tree: {e}")
+            return []
+    
+    def _build_tree(self, current_path, relative_path, max_depth, current_depth):
+        """Recursively build file tree"""
+        if current_depth >= max_depth:
+            return []
+        
+        try:
+            items = []
+            
+            if not os.path.exists(current_path) or not os.path.isdir(current_path):
+                return items
+            
+            for item in os.listdir(current_path):
+                item_path = os.path.join(current_path, item)
+                item_relative_path = os.path.join(relative_path, item).replace('\\', '/') if relative_path else item
+                
+                if os.path.isdir(item_path):
+                    # Directory
+                    children = self._build_tree(item_path, item_relative_path, max_depth, current_depth + 1)
+                    
+                    items.append({
+                        'name': item,
+                        'type': 'folder',
+                        'path': item_relative_path,
+                        'is_directory': True,
+                        'children': children,
+                        'has_children': len(children) > 0
+                    })
+                else:
+                    # File
+                    file_type = self._get_file_type(item)
+                    
+                    items.append({
+                        'name': item,
+                        'type': file_type,
+                        'path': item_relative_path,
+                        'is_directory': False,
+                        'icon': self._get_file_icon(file_type)
+                    })
+            
+            # Sort: directories first, then files
+            items.sort(key=lambda x: (not x['is_directory'], x['name'].lower()))
+            
+            return items
+            
+        except Exception as e:
+            print(f"Error building tree for {current_path}: {e}")
+            return []
+    
+    def search_files(self, query, file_type=None):
+        """Search for files by name or type"""
+        results = []
+        
+        try:
+            for root, dirs, files in os.walk(self.upload_path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    
+                    # Check if file matches search criteria
+                    matches_query = query.lower() in file.lower() if query else True
+                    matches_type = (self._get_file_type(file) == file_type) if file_type else True
+                    
+                    if matches_query and matches_type:
+                        try:
+                            stat_info = os.stat(file_path)
+                            relative_path = os.path.relpath(file_path, self.upload_path).replace('\\', '/')
+                            directory = os.path.dirname(relative_path)
+                            
+                            results.append({
+                                'name': file,
+                                'path': relative_path,
+                                'directory': directory if directory != '.' else '',
+                                'size': stat_info.st_size,
+                                'size_formatted': self._format_file_size(stat_info.st_size),
+                                'type': self._get_file_type(file),
+                                'modified': datetime.fromtimestamp(stat_info.st_mtime).isoformat()
+                            })
+                        except OSError:
+                            continue
+            
+            return results
+            
+        except Exception as e:
+            print(f"Error searching files: {e}")
+            return []
+    
+    def get_storage_breakdown(self):
+        """Get storage usage breakdown by file type"""
+        breakdown = {
+            'dicom': {'count': 0, 'size': 0},
+            'nifti': {'count': 0, 'size': 0},
+            'archive': {'count': 0, 'size': 0},
+            'image': {'count': 0, 'size': 0},
+            'other': {'count': 0, 'size': 0}
+        }
+        
+        try:
+            for root, dirs, files in os.walk(self.upload_path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    
+                    try:
+                        file_size = os.path.getsize(file_path)
+                        file_type = self._get_file_type(file)
+                        
+                        if file_type in breakdown:
+                            breakdown[file_type]['count'] += 1
+                            breakdown[file_type]['size'] += file_size
+                        else:
+                            breakdown['other']['count'] += 1
+                            breakdown['other']['size'] += file_size
+                            
+                    except OSError:
+                        continue
+            
+            # Format sizes
+            for file_type in breakdown:
+                breakdown[file_type]['size_formatted'] = self._format_file_size(breakdown[file_type]['size'])
+            
+            return breakdown
+            
+        except Exception as e:
+            print(f"Error getting storage breakdown: {e}")
+            return breakdown
+    
+    def _get_target_directory(self, file_type):
+        """Get target directory based on file type"""
+        type_directories = {
+            'dicom': 'dicom_datasets',
+            'nifti': 'nifti_files',
+            'archive': 'archives',
+            'image': 'images'
+        }
+        
+        subdir = type_directories.get(file_type, 'other')
+        return os.path.join(self.upload_path, subdir)
     
     def _get_file_type(self, filename):
-        """Get file type based on extension"""
-        ext = filename.lower().split('.')[-1]
+        """Determine file type based on extension"""
+        if not filename:
+            return 'unknown'
         
-        if ext in ['dcm']:
+        filename_lower = filename.lower()
+        
+        # Medical imaging formats
+        if filename_lower.endswith('.dcm'):
             return 'dicom'
-        elif ext in ['nii', 'gz']:
+        elif filename_lower.endswith(('.nii', '.nii.gz')):
             return 'nifti'
-        elif ext in ['zip', 'tar', 'gz']:
+        
+        # Archive formats
+        elif filename_lower.endswith(('.zip', '.tar', '.tar.gz', '.rar', '.7z')):
             return 'archive'
-        elif ext in ['jpg', 'jpeg', 'png', 'bmp', 'tiff']:
+        
+        # Image formats
+        elif filename_lower.endswith(('.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.gif')):
             return 'image'
+        
+        # Document formats
+        elif filename_lower.endswith(('.pdf', '.doc', '.docx', '.txt', '.rtf')):
+            return 'document'
+        
+        # Data formats
+        elif filename_lower.endswith(('.csv', '.xlsx', '.xls', '.json', '.xml')):
+            return 'data'
+        
+        # Code formats
+        elif filename_lower.endswith(('.py', '.js', '.html', '.css', '.sql', '.sh')):
+            return 'code'
+        
         else:
             return 'unknown'
     
-    def _get_mime_type(self, filepath):
-        """Get MIME type of file"""
-        try:
-            if os.path.isdir(filepath):
-                return 'inode/directory'
-            
-            # Try using python-magic
-            mime = magic.from_file(filepath, mime=True)
-            if mime:
-                return mime
-            
-            # Fallback to mimetypes
-            return mimetypes.guess_type(filepath)[0] or 'application/octet-stream'
-        except:
-            return 'application/octet-stream'
+    def _get_file_icon(self, file_type):
+        """Get Font Awesome icon class for file type"""
+        icons = {
+            'folder': 'fas fa-folder',
+            'dicom': 'fas fa-x-ray',
+            'nifti': 'fas fa-brain',
+            'archive': 'fas fa-archive',
+            'image': 'fas fa-image',
+            'document': 'fas fa-file-alt',
+            'data': 'fas fa-table',
+            'code': 'fas fa-code',
+            'unknown': 'fas fa-file'
+        }
+        
+        return icons.get(file_type, icons['unknown'])
+    
+    def _can_preview(self, filename):
+        """Check if file can be previewed"""
+        preview_types = ['image']
+        file_type = self._get_file_type(filename)
+        return file_type in preview_types
     
     def _format_file_size(self, size_bytes):
         """Format file size in human readable format"""
@@ -153,363 +380,72 @@ class FileManager:
             return "0 B"
         
         size_names = ["B", "KB", "MB", "GB", "TB"]
-        i = 0
-        while size_bytes >= 1024 and i < len(size_names) - 1:
-            size_bytes /= 1024.0
-            i += 1
+        import math
+        i = int(math.floor(math.log(size_bytes, 1024)))
+        p = math.pow(1024, i)
+        s = round(size_bytes / p, 2)
         
-        return f"{size_bytes:.1f} {size_names[i]}"
-    
-    def _time_ago(self, timestamp):
-        """Get time ago string"""
-        now = datetime.now()
-        file_time = datetime.fromtimestamp(timestamp)
-        diff = now - file_time
-        
-        if diff.days > 0:
-            return f"{diff.days} day{'s' if diff.days != 1 else ''} ago"
-        elif diff.seconds > 3600:
-            hours = diff.seconds // 3600
-            return f"{hours} hour{'s' if hours != 1 else ''} ago"
-        elif diff.seconds > 60:
-            minutes = diff.seconds // 60
-            return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
-        else:
-            return "Just now"
-    
-    def list_files(self, path=''):
-        """List files in a directory"""
-        try:
-            full_path = os.path.join(self.upload_path, path)
-            
-            if not os.path.exists(full_path):
-                return []
-            
-            if not os.path.isdir(full_path):
-                return []
-            
-            files = []
-            for item in os.listdir(full_path):
-                item_path = os.path.join(full_path, item)
-                file_info = self._get_file_info(item_path)
-                if file_info:
-                    files.append(file_info)
-            
-            # Sort: directories first, then by name
-            files.sort(key=lambda x: (not x['is_directory'], x['name'].lower()))
-            
-            return files
-            
-        except Exception as e:
-            logging.error(f"Error listing files for user {self.username}: {e}")
-            return []
-    
-    def get_file_tree(self, depth=3, path=''):
-        """Get file tree structure"""
-        try:
-            full_path = os.path.join(self.upload_path, path)
-            
-            if not os.path.exists(full_path) or not os.path.isdir(full_path):
-                return []
-            
-            if depth <= 0:
-                return []
-            
-            tree = []
-            for item in os.listdir(full_path):
-                item_path = os.path.join(full_path, item)
-                rel_path = os.path.join(path, item)
-                
-                if os.path.isdir(item_path):
-                    children = self.get_file_tree(depth - 1, rel_path)
-                    tree.append({
-                        'name': item,
-                        'path': rel_path,
-                        'type': 'directory',
-                        'children': children,
-                        'file_count': len([f for f in children if not f.get('is_directory', True)])
-                    })
-                else:
-                    file_info = self._get_file_info(item_path)
-                    if file_info:
-                        tree.append(file_info)
-            
-            return tree
-            
-        except Exception as e:
-            logging.error(f"Error getting file tree for user {self.username}: {e}")
-            return []
-    
-    def get_breadcrumbs(self, path):
-        """Get breadcrumb navigation"""
-        breadcrumbs = [{'name': 'Home', 'path': ''}]
-        
-        if not path:
-            return breadcrumbs
-        
-        parts = path.split('/')
-        current_path = ''
-        
-        for part in parts:
-            if part:
-                current_path = os.path.join(current_path, part) if current_path else part
-                breadcrumbs.append({
-                    'name': part,
-                    'path': current_path
-                })
-        
-        return breadcrumbs
-    
-    def get_recent_files(self, limit=10):
-        """Get recent files"""
-        try:
-            all_files = []
-            
-            # Walk through all user directories
-            for root, dirs, files in os.walk(self.upload_path):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    file_info = self._get_file_info(file_path)
-                    if file_info:
-                        all_files.append(file_info)
-            
-            # Sort by modification time (newest first)
-            all_files.sort(key=lambda x: x['modified'], reverse=True)
-            
-            return all_files[:limit]
-            
-        except Exception as e:
-            logging.error(f"Error getting recent files for user {self.username}: {e}")
-            return []
-    
-    def delete_file(self, file_path):
-        """Delete a file or directory"""
-        try:
-            full_path = os.path.join(self.upload_path, file_path)
-            
-            if not os.path.exists(full_path):
-                raise FileNotFoundError(f"File not found: {file_path}")
-            
-            # Ensure path is within user's directory
-            if not os.path.abspath(full_path).startswith(os.path.abspath(self.upload_path)):
-                raise ValueError("Access denied: Path outside user directory")
-            
-            if os.path.isdir(full_path):
-                shutil.rmtree(full_path)
-            else:
-                os.remove(full_path)
-            
-            logging.info(f"File deleted: {full_path} by user {self.username}")
-            return True
-            
-        except Exception as e:
-            logging.error(f"Error deleting file {file_path} for user {self.username}: {e}")
-            raise
-    
-    def get_file_size(self, file_path):
-        """Get file size"""
-        try:
-            full_path = os.path.join(self.upload_path, file_path)
-            
-            if not os.path.exists(full_path):
-                return None
-            
-            if os.path.isdir(full_path):
-                return self._get_directory_size(full_path)
-            else:
-                return os.path.getsize(full_path)
-                
-        except Exception as e:
-            logging.error(f"Error getting file size for {file_path}: {e}")
-            return None
-    
-    def _get_directory_size(self, directory):
-        """Get total size of directory"""
+        return f"{s} {size_names[i]}"
+
+# Utility functions for use in routes
+def get_file_stats(directory_path):
+    """Get statistics for a directory"""
+    try:
+        total_files = 0
         total_size = 0
-        try:
-            for dirpath, dirnames, filenames in os.walk(directory):
-                for filename in filenames:
-                    filepath = os.path.join(dirpath, filename)
-                    if os.path.exists(filepath):
-                        total_size += os.path.getsize(filepath)
-        except:
-            pass
-        return total_size
-    
-    def rename_file(self, old_name, new_name, current_path=''):
-        """Rename a file or directory"""
-        try:
-            old_path = os.path.join(self.upload_path, current_path, old_name)
-            new_path = os.path.join(self.upload_path, current_path, new_name)
-            
-            if not os.path.exists(old_path):
-                raise FileNotFoundError(f"File not found: {old_name}")
-            
-            if os.path.exists(new_path):
-                raise FileExistsError(f"File already exists: {new_name}")
-            
-            os.rename(old_path, new_path)
-            
-            logging.info(f"File renamed: {old_path} -> {new_path} by user {self.username}")
-            return self._get_file_info(new_path)
-            
-        except Exception as e:
-            logging.error(f"Error renaming file {old_name} to {new_name}: {e}")
-            raise
-    
-    def create_folder(self, folder_name, current_path=''):
-        """Create a new folder"""
-        try:
-            folder_path = os.path.join(self.upload_path, current_path, folder_name)
-            
-            if os.path.exists(folder_path):
-                raise FileExistsError(f"Folder already exists: {folder_name}")
-            
-            os.makedirs(folder_path)
-            
-            logging.info(f"Folder created: {folder_path} by user {self.username}")
-            return self._get_file_info(folder_path)
-            
-        except Exception as e:
-            logging.error(f"Error creating folder {folder_name}: {e}")
-            raise
-    
-    def copy_file(self, source_path, destination_path):
-        """Copy a file or directory"""
-        try:
-            source_full = os.path.join(self.upload_path, source_path)
-            dest_full = os.path.join(self.upload_path, destination_path)
-            
-            if not os.path.exists(source_full):
-                raise FileNotFoundError(f"Source file not found: {source_path}")
-            
-            if os.path.isdir(source_full):
-                shutil.copytree(source_full, dest_full)
-            else:
-                shutil.copy2(source_full, dest_full)
-            
-            logging.info(f"File copied: {source_full} -> {dest_full} by user {self.username}")
-            return self._get_file_info(dest_full)
-            
-        except Exception as e:
-            logging.error(f"Error copying file {source_path} to {destination_path}: {e}")
-            raise
-    
-    def move_file(self, source_path, destination_path):
-        """Move a file or directory"""
-        try:
-            source_full = os.path.join(self.upload_path, source_path)
-            dest_full = os.path.join(self.upload_path, destination_path)
-            
-            if not os.path.exists(source_full):
-                raise FileNotFoundError(f"Source file not found: {source_path}")
-            
-            shutil.move(source_full, dest_full)
-            
-            logging.info(f"File moved: {source_full} -> {dest_full} by user {self.username}")
-            return self._get_file_info(dest_full)
-            
-        except Exception as e:
-            logging.error(f"Error moving file {source_path} to {destination_path}: {e}")
-            raise
-    
-    def download_file(self, file_path):
-        """Download a file"""
-        try:
-            full_path = os.path.join(self.upload_path, file_path)
-            
-            if not os.path.exists(full_path):
-                raise FileNotFoundError(f"File not found: {file_path}")
-            
-            from flask import send_file
-            return send_file(full_path, as_attachment=True)
-            
-        except Exception as e:
-            logging.error(f"Error downloading file {file_path}: {e}")
-            raise
-    
-    def preview_file(self, file_path):
-        """Preview a file (if supported)"""
-        try:
-            full_path = os.path.join(self.upload_path, file_path)
-            
-            if not os.path.exists(full_path):
-                raise FileNotFoundError(f"File not found: {file_path}")
-            
-            file_info = self._get_file_info(full_path)
-            
-            # For now, return file info as JSON
-            # In the future, this could generate thumbnails for images
-            from flask import jsonify
-            return jsonify(file_info)
-            
-        except Exception as e:
-            logging.error(f"Error previewing file {file_path}: {e}")
-            raise
-    
-    def move_to_processing(self, file_path):
-        """Move file to processing directory"""
-        try:
-            source_path = os.path.join(self.upload_path, file_path)
-            dest_path = os.path.join(self.upload_path, 'selected_for_processing', os.path.basename(file_path))
-            
-            if not os.path.exists(source_path):
-                raise FileNotFoundError(f"File not found: {file_path}")
-            
-            shutil.move(source_path, dest_path)
-            
-            logging.info(f"File moved to processing: {source_path} -> {dest_path}")
-            return self._get_file_info(dest_path)
-            
-        except Exception as e:
-            logging.error(f"Error moving file to processing: {e}")
-            raise
-    
-    def get_processable_files(self):
-        """Get files that can be processed by TotalSegmentator"""
-        try:
-            processable_files = []
-            
-            # Look for DICOM and NIfTI files
-            for root, dirs, files in os.walk(self.upload_path):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    file_info = self._get_file_info(file_path)
+        file_types = {}
+        
+        for root, dirs, files in os.walk(directory_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                try:
+                    file_size = os.path.getsize(file_path)
+                    total_files += 1
+                    total_size += file_size
                     
-                    if file_info and file_info['type'] in ['dicom', 'nifti']:
-                        processable_files.append(file_info)
-            
-            return processable_files
-            
-        except Exception as e:
-            logging.error(f"Error getting processable files: {e}")
-            return []
-    
-    def get_processing_history(self):
-        """Get processing history"""
-        try:
-            # This would typically come from a database
-            # For now, return empty list
-            return []
-        except Exception as e:
-            logging.error(f"Error getting processing history: {e}")
-            return []
-    
-    def get_processing_results(self):
-        """Get processing results"""
-        try:
-            results = []
-            
-            if os.path.exists(self.results_path):
-                for root, dirs, files in os.walk(self.results_path):
-                    for file in files:
-                        file_path = os.path.join(root, file)
-                        file_info = self._get_file_info(file_path)
-                        if file_info:
-                            results.append(file_info)
-            
-            return results
-            
-        except Exception as e:
-            logging.error(f"Error getting processing results: {e}")
-            return [] 
+                    # Count by file type
+                    file_manager = FileManager('')
+                    file_type = file_manager._get_file_type(file)
+                    file_types[file_type] = file_types.get(file_type, 0) + 1
+                    
+                except OSError:
+                    continue
+        
+        return {
+            'total_files': total_files,
+            'total_size': total_size,
+            'file_types': file_types
+        }
+        
+    except Exception as e:
+        print(f"Error getting file stats: {e}")
+        return {'total_files': 0, 'total_size': 0, 'file_types': {}}
+
+def get_recent_files(directory_path, limit=10):
+    """Get recently uploaded files"""
+    try:
+        recent_files = []
+        
+        for root, dirs, files in os.walk(directory_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                try:
+                    stat_info = os.stat(file_path)
+                    recent_files.append({
+                        'name': file,
+                        'path': os.path.relpath(file_path, directory_path).replace('\\', '/'),
+                        'size': stat_info.st_size,
+                        'modified': stat_info.st_mtime,
+                        'modified_formatted': datetime.fromtimestamp(stat_info.st_mtime).strftime('%Y-%m-%d %H:%M')
+                    })
+                    
+                except OSError:
+                    continue
+        
+        # Sort by modification time (newest first) and limit
+        recent_files.sort(key=lambda x: x['modified'], reverse=True)
+        return recent_files[:limit]
+        
+    except Exception as e:
+        print(f"Error getting recent files: {e}")
+        return [] 

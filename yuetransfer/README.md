@@ -1,264 +1,348 @@
-# YueTransfer - TotalSegmentator Web Server
+# YueTransfer - Medical Imaging Transfer & Processing Platform
 
-A complete web-based solution for medical image segmentation using TotalSegmentator with GPU acceleration.
+A comprehensive standalone SFTP + Web interface application for handling large medical imaging files with TotalSegmentator integration.
 
-## 🚀 Quick Start
+## 🎯 Features
 
-### Prerequisites
-- **Windows 10/11** with NVIDIA GPU
-- **Miniconda** installed to `D:\ProgramData\miniconda3`
-- **CUDA Toolkit 11.8**
+### **File Transfer & Management**
+- **SFTP Server**: Secure file transfer for large DICOM datasets (bypasses browser limitations)
+- **Web Interface**: Modern, responsive UI for file management
+- **Multi-User Support**: Each user has isolated storage space with quotas
+- **File Browser**: Intuitive navigation with search, filtering, and bulk operations
+- **Drag & Drop Upload**: Easy file upload through web interface
 
-### Setup (3 Steps)
+### **TotalSegmentator Integration**
+- **Background Processing**: Asynchronous segmentation jobs
+- **Multiple Tasks**: Support for various TotalSegmentator tasks (total, lung_vessels, etc.)
+- **Job Management**: Track progress, view results, cancel jobs
+- **Batch Processing**: Process multiple files simultaneously
 
-1. **Setup YueTransfer Environment**
-   ```cmd
-   start_yuetransfer.bat
-   ```
+### **User Management**
+- **Role-Based Access**: Users and administrators with different permissions
+- **Storage Quotas**: Configurable storage limits per user
+- **User Isolation**: Complete file separation between users
+- **Admin Panel**: Comprehensive user and system management
 
-2. **Setup TotalSegmentator Environment**
-   ```cmd
-   start_totalsegmentator.bat
-   ```
+### **Professional Features**
+- **Security**: CSRF protection, secure sessions, user isolation
+- **Monitoring**: System health, storage usage, job tracking
+- **Logging**: Comprehensive audit trail
+- **Error Handling**: Graceful error pages and API responses
 
-3. **Initialize Database**
-   ```cmd
-   python init_db.py
-   ```
-
-### Run the Server
-
-**Start Web Server:**
-```cmd
-yueserver.bat
-```
-- Web Interface: http://localhost:5000
-- SFTP Server: localhost:2222
-- Default Admin: admin / admin123
-
-**Run AI Processing:**
-```cmd
-totalsegmentator.bat
-```
-
-## 📋 Features
-
-### YueTransfer (Web Interface)
-- **Multi-user Support**: User registration and management
-- **File Upload**: Drag & drop interface for DICOM/NIfTI files
-- **SFTP Server**: Large file transfers via SFTP
-- **Storage Isolation**: Each user has separate storage space
-- **Admin Panel**: System monitoring and user management
-- **Real-time Processing**: Queue management for segmentation jobs
-
-### TotalSegmentator (AI Processing)
-- **GPU Acceleration**: Full CUDA support for fast processing
-- **104 Anatomical Structures**: Complete body segmentation
-- **Multiple Input Formats**: DICOM, NIfTI, ZIP archives
-- **Flexible Processing**: Fast mode, specific ROI selection
-- **Quality Output**: High-resolution segmentation masks
-
-## 🔧 Technical Stack
-
-### YueTransfer Environment
-- **Python**: 3.10.13
-- **Web Framework**: Flask
-- **Database**: SQLite with SQLAlchemy
-- **File Transfer**: Paramiko (SFTP)
-- **UI**: Bootstrap + JavaScript
-
-### TotalSegmentator Environment
-- **Python**: 3.10.13
-- **Deep Learning**: PyTorch 2.1.2 + TensorFlow 2.10.1
-- **GPU**: CUDA 11.8 + cuDNN 8.9.7.29
-- **Medical Imaging**: TotalSegmentator 2.10.0
-- **Neural Networks**: nnU-Net v2
-
-## 📁 File Structure
+## 🏗️ Architecture
 
 ```
 yuetransfer/
-├── app/                    # Flask application
-│   ├── routes/            # Web routes (auth, main, admin, api)
+├── main.py                 # Application entry point
+├── requirements.txt        # Python dependencies
+├── config/                # Configuration files
+├── app/                   # Main application
+│   ├── __init__.py        # Flask app factory
+│   ├── config.py          # Configuration management
+│   ├── sftp_server.py     # SFTP server implementation
+│   ├── models/            # Database models
+│   │   └── user.py        # User and job models
+│   ├── routes/            # Web routes
+│   │   ├── auth.py        # Authentication routes
+│   │   ├── main.py        # Main application routes
+│   │   ├── admin.py       # Admin panel routes
+│   │   └── api.py         # API endpoints
 │   ├── templates/         # HTML templates
-│   ├── static/           # CSS/JS files
-│   ├── models/           # Database models
-│   └── utils/            # Utility functions
-├── config/               # Configuration files
-├── user_data/           # User uploads and results
-├── main.py              # Server entry point
-├── init_db.py           # Database initialization
-├── requirements.txt     # Python dependencies
-├── yueserver.bat        # Start web server
-├── totalsegmentator.bat # Start AI processing
-├── start_yuetransfer.bat    # Setup YueTransfer environment
-├── start_totalsegmentator.bat # Setup TotalSegmentator environment
-└── SETUP_INSTRUCTIONS.md # Detailed setup guide
+│   │   ├── base.html      # Base template
+│   │   ├── auth/          # Authentication templates
+│   │   ├── main/          # Main application templates
+│   │   └── admin/         # Admin panel templates
+│   ├── static/            # CSS, JS, images
+│   │   ├── css/style.css  # Custom styles
+│   │   └── js/app.js      # JavaScript functionality
+│   └── utils/             # Utility modules
+│       ├── auth.py        # Authentication utilities
+│       ├── file_manager.py # File management
+│       ├── totalsegmentator_integration.py # TotalSegmentator
+│       ├── logger.py      # Logging utilities
+│       ├── error_handlers.py # Error handling
+│       └── context_processors.py # Template context
+├── uploads/               # User file storage
+├── results/              # Processing results
+└── logs/                 # Application logs
 ```
+
+## 🚀 Installation
+
+### **Prerequisites**
+- Python 3.9+ 
+- pip package manager
+- TotalSegmentator (optional, for processing functionality)
+
+### **1. Clone/Create Directory**
+```bash
+mkdir yuetransfer
+cd yuetransfer
+```
+
+### **2. Install Dependencies**
+```bash
+pip install -r requirements.txt
+```
+
+### **3. Install TotalSegmentator (Optional)**
+```bash
+pip install TotalSegmentator
+```
+
+### **4. Initialize Application**
+```bash
+python main.py
+```
+
+The application will:
+- Create necessary directories
+- Initialize the database
+- Create default admin user (username: `admin`, password: `yuetransfer123`)
+- Start both SFTP and Web servers
+
+## 🔧 Configuration
+
+### **Default Settings**
+- **Web Interface**: http://localhost:8080
+- **SFTP Server**: localhost:2222
+- **Admin User**: admin / yuetransfer123 (⚠️ Change immediately!)
+
+### **Custom Configuration**
+Create `config/config.yaml`:
+```yaml
+# Server Settings
+WEB_HOST: "0.0.0.0"
+WEB_PORT: 8080
+SFTP_HOST: "0.0.0.0"
+SFTP_PORT: 2222
+
+# Storage Settings
+UPLOAD_FOLDER: "./app/uploads"
+RESULTS_FOLDER: "./app/results"
+MAX_CONTENT_LENGTH: 17179869184  # 16GB
+
+# Security Settings
+SECRET_KEY: "your-secret-key-here"
+SESSION_TIMEOUT: 3600
+
+# Database
+SQLALCHEMY_DATABASE_URI: "sqlite:///yuetransfer.db"
+
+# Logging
+LOG_LEVEL: "INFO"
+LOG_FILE: "./app/logs/yuetransfer.log"
+```
+
+## 📖 Usage
+
+### **Web Interface**
+
+1. **Login**: Navigate to http://localhost:8080
+2. **Dashboard**: View statistics and recent activity
+3. **Files**: Browse, upload, and manage files
+4. **Process**: Send files to TotalSegmentator
+5. **Results**: View and download processing results
+
+### **SFTP Transfer (Recommended for Large Files)**
+
+**Command Line:**
+```bash
+sftp -P 2222 username@localhost
+```
+
+**Popular SFTP Clients:**
+- **Windows**: WinSCP, FileZilla
+- **Mac**: Cyberduck, FileZilla
+- **Linux**: FileZilla, command line
+
+### **Admin Functions**
+
+1. **User Management**: Create, edit, delete users
+2. **Storage Monitoring**: View usage and quotas
+3. **Job Management**: Monitor processing jobs
+4. **System Status**: Check health and performance
 
 ## 🔐 Security
 
-### User Management
-- **Self-registration**: Users can create accounts
-- **Role-based Access**: Admin and regular users
-- **Storage Isolation**: Users can only access their own files
-- **Session Management**: Secure login/logout
+### **Authentication**
+- Username/password authentication
+- Session management with timeout
+- CSRF protection on forms
 
-### SFTP Security
-- **SSH Key Authentication**: Supported
-- **Password Authentication**: Supported
-- **Port Isolation**: Separate from web server
-- **User-specific Roots**: Users restricted to their directories
+### **User Isolation**
+- Separate storage directories per user
+- Path validation to prevent directory traversal
+- File access restricted to user's own files
 
-## 📊 Monitoring
+### **SFTP Security**
+- SSH-based file transfer
+- User-specific home directories
+- No shell access (SFTP only)
 
-### System Metrics
-- **CPU Usage**: Real-time monitoring
-- **Memory Usage**: Available RAM tracking
-- **GPU Usage**: CUDA memory monitoring
-- **Disk Usage**: Storage space tracking
+## 📊 TotalSegmentator Integration
 
-### Logs
-- **Application Logs**: `logs/app.log`
-- **Error Logs**: `logs/error.log`
-- **Access Logs**: `logs/access.log`
+### **Supported Tasks**
+- `total`: Complete segmentation (117 classes)
+- `total_mr`: MR image segmentation
+- `lung_vessels`: Lung vessel segmentation
+- `cerebral_bleed`: Cerebral bleeding detection
+- `hip_implant`: Hip implant detection
+- And more...
 
-## 🛠️ Configuration
+### **Processing Workflow**
+1. Upload DICOM or NIfTI files via SFTP or web
+2. Select files for processing
+3. Choose segmentation task and options
+4. Submit job for background processing
+5. Monitor progress and view results
 
-### Main Configuration (`config/config.yaml`)
-```yaml
-server:
-  web_port: 5000
-  sftp_port: 2222
-  
-database:
-  path: "yuetransfer.db"
-  
-security:
-  secret_key: "your-secret-key"
-  
-storage:
-  base_path: "user_data"
-  max_file_size: 1073741824  # 1GB
-  
-totalsegmentator:
-  gpu_device: "gpu"
-  fast_mode: true
-```
+### **Job Management**
+- Real-time progress tracking
+- Job cancellation
+- Result download
+- Processing history
 
-## 📖 Usage Examples
+## 🔍 File Management
 
-### Web Interface
-1. **Register/Login**: Create account or login as admin
-2. **Upload Files**: Drag & drop DICOM/NIfTI files
-3. **Process Images**: Select files and start segmentation
-4. **Download Results**: Get segmentation masks and statistics
+### **Supported Formats**
+- **Medical**: DICOM (.dcm), NIfTI (.nii, .nii.gz)
+- **Archives**: ZIP, TAR, 7Z
+- **Images**: JPEG, PNG, TIFF, BMP
+- **Documents**: PDF, TXT, CSV
 
-### SFTP Access
+### **File Operations**
+- Upload (web + SFTP)
+- Download
+- Delete
+- Rename
+- Move
+- Create folders
+- Bulk operations
+
+### **Storage Features**
+- User quotas
+- Usage tracking
+- File type organization
+- Search and filtering
+
+## 🛠️ Development
+
+### **Running in Development Mode**
 ```bash
-# Connect to SFTP server
-sftp -P 2222 username@localhost
-
-# Upload large files
-put large_dicom_archive.zip
-
-# Download results
-get segmentation_results/
+python main.py --dev
 ```
 
-### Command Line Processing
-```cmd
-# Basic segmentation
-totalsegmentator -i input.nii.gz -o output -d gpu
+### **Key Components**
+- **Flask**: Web framework
+- **Paramiko**: SFTP server implementation
+- **SQLAlchemy**: Database ORM
+- **Bootstrap**: UI framework
+- **Threading**: Background job processing
 
-# Fast segmentation
-totalsegmentator -i input.nii.gz -o output -d gpu -f
+### **Database Models**
+- **User**: Authentication and storage management
+- **ProcessingJob**: TotalSegmentator job tracking
 
-# Specific structures
-totalsegmentator -i input.nii.gz -o output -d gpu -rs liver kidney spleen
+## 📝 Command Line Options
+
+```bash
+python main.py [OPTIONS]
+
+Options:
+  --dev                 Run in development mode
+  --production         Run in production mode  
+  --port PORT          Web server port (default: 8080)
+  --sftp-port PORT     SFTP server port (default: 2222)
+  --host HOST          Host to bind to (default: 0.0.0.0)
+  --config CONFIG      Configuration file path
 ```
 
-## 🔄 Maintenance
+## 🚨 Important Notes
 
-### Regular Tasks
-1. **Database Backup**: Backup `yuetransfer.db` regularly
-2. **Log Rotation**: Archive old log files
-3. **Storage Cleanup**: Remove old temporary files
-4. **Security Updates**: Keep dependencies updated
+### **First Login**
+1. Access http://localhost:8080
+2. Login with `admin` / `yuetransfer123`
+3. **Immediately change the password**
+4. Create additional users as needed
 
-### Updates
-```cmd
-# Update YueTransfer
-conda run -n yuetransfer pip install --upgrade -r requirements.txt
+### **Large File Handling**
+- Use SFTP for files > 1GB
+- Web upload suitable for smaller files
+- Browser limitations: ~2-4GB depending on browser/system
 
-# Update TotalSegmentator
-conda run -n totalsegmentator pip install --upgrade totalsegmentator
+### **TotalSegmentator Requirements**
+- GPU recommended for fast processing
+- CUDA support for GPU acceleration
+- Sufficient disk space for results
+
+### **Production Deployment**
+- Change default admin password
+- Use HTTPS (configure reverse proxy)
+- Set up proper firewall rules
+- Configure backup procedures
+- Monitor disk space and performance
+
+## 🔧 Troubleshooting
+
+### **Common Issues**
+
+**SFTP Connection Failed:**
+```bash
+# Check if server is running
+netstat -an | grep 2222
+
+# Test connection
+sftp -P 2222 admin@localhost
 ```
 
-## 🚨 Troubleshooting
+**TotalSegmentator Not Found:**
+```bash
+# Install TotalSegmentator
+pip install TotalSegmentator
 
-### Common Issues
-
-#### GPU Not Detected
-```cmd
-# Check CUDA installation
-nvcc --version
-nvidia-smi
-
-# Test PyTorch GPU
-conda run -n totalsegmentator python -c "import torch; print(torch.cuda.is_available())"
+# Verify installation
+TotalSegmentator --help
 ```
 
-#### Environment Issues
-```cmd
-# Recreate environments
-conda env remove -n yuetransfer
-conda env remove -n totalsegmentator
-# Then run setup scripts again
-```
+**Permission Errors:**
+- Ensure write permissions on upload/results directories
+- Check user isolation settings
+- Verify file ownership
 
-#### Port Conflicts
-```cmd
-# Check port usage
-netstat -an | findstr :5000
-netstat -an | findstr :2222
-
-# Change ports in config.yaml if needed
+**Database Issues:**
+```bash
+# Reset database (⚠️ Deletes all data)
+rm yuetransfer.db
+python main.py  # Will recreate database
 ```
 
 ## 📞 Support
 
-### Documentation
-- **Setup Guide**: `SETUP_INSTRUCTIONS.md`
-- **Manual Setup**: `MANUAL_SETUP.md`
-- **TotalSegmentator Setup**: `MANUAL_TOTALSEGMENTATOR_SETUP.md`
+### **Getting Help**
+- Check logs in `app/logs/yuetransfer.log`
+- Review configuration settings
+- Verify TotalSegmentator installation
+- Check system resources (disk space, memory)
 
-### Logs Location
-- **Application**: `logs/app.log`
-- **Errors**: `logs/error.log`
-- **Access**: `logs/access.log`
-
-### Environment Info
-```cmd
-# YueTransfer environment
-conda run -n yuetransfer python -c "import sys; print(sys.version)"
-
-# TotalSegmentator environment
-conda run -n totalsegmentator python -c "import torch; print(torch.__version__)"
-```
+### **Contact**
+- **Default Admin Email**: admin@yuetransfer.local
+- **Documentation**: This README file
+- **Issues**: Check application logs for details
 
 ## 🎉 Success!
 
-Your TotalSegmentator server is ready for production use!
+You now have a complete medical imaging transfer and processing platform! The application provides:
 
-**Access Points:**
-- **Web Interface**: http://localhost:5000
-- **SFTP Server**: localhost:2222
-- **Admin Login**: admin / admin123
+✅ **Secure SFTP server** for large file transfers  
+✅ **Modern web interface** for file management  
+✅ **TotalSegmentator integration** for medical image processing  
+✅ **Multi-user support** with storage quotas  
+✅ **Admin panel** for system management  
+✅ **Professional-grade security** and isolation  
 
-**Next Steps:**
-1. Configure your domain/IP for external access
-2. Set up SSL certificates for HTTPS
-3. Configure firewall rules
-4. Set up monitoring and backups
-5. Train your users on the interface 
+**Ready to handle gigabyte-sized medical imaging datasets with ease!** 🏥🧠
+
+---
+
+**YueTransfer** - Professional medical imaging transfer and processing platform. 

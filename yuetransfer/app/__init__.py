@@ -36,6 +36,10 @@ def create_app(config=None):
     login_manager.login_message = 'Please log in to access this page.'
     login_manager.login_message_category = 'info'
     
+    # Initialize login manager with user loader
+    from app.utils.auth import init_login_manager
+    init_login_manager(login_manager)
+    
     # Register blueprints
     from app.routes.auth import auth_bp
     from app.routes.main import main_bp
