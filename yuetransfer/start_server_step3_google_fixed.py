@@ -1,25 +1,36 @@
-#!/usr/bin/env python3
-"""
-YueTransfer Server - Step 2: Enhanced File Browser with Navigation
-"""
-
 import os
-import sys
-import shutil
 import json
-from datetime import datetime
-from flask import Flask, render_template_string, request, redirect, url_for, flash, jsonify
-from flask_login import LoginManager, login_user, logout_user, login_required, UserMixin, current_user
-from werkzeug.utils import secure_filename
-from urllib.parse import quote, unquote
 import requests
+from flask import Flask, render_template_string, request, redirect, url_for, flash, session
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
+import shutil
+
+app = Flask(__name__)
+app.secret_key = 'your-secret-key-change-this-in-production'
+
+# Initialize Flask-Login
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
 
 # Google OAuth Configuration
-GOOGLE_CLIENT_ID = "191607007979-el9m9u4q8gmvbcq5bokarnelsvu3gis7.apps.googleusercontent.com"  # Replace with your actual Client ID
-GOOGLE_CLIENT_SECRET = "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"  # Replace with your actual Client Secret
-GOOGLE_REDIRECT_URI = "http://localhost:5000/login/google/authorized"
+GOOGLE_CLIENT_ID = '191607007979-el9m9u4q8gmvbcq5bokarnelsvu3gis7.apps.googleusercontent.com'
+GOOGLE_CLIENT_SECRET = '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'
+GOOGLE_REDIRECT_URI = 'http://localhost:5000/login/google/authorized'
 
-# Simple user class
+# User storage (in production, use a database)
+users = {
+    'pokpok': {'password': generate_password_hash('pokpok'), 'is_admin': True},
+    'aaa': {'password': generate_password_hash('aaa'), 'is_admin': False},
+    'bbb': {'password': generate_password_hash('bbb'), 'is_admin': False},
+    'ccc': {'password': generate_password_hash('ccc'), 'is_admin': False}
+}
+
+# Google OAuth users storage - store by username for easier lookup
+google_users = {}
+
 class SimpleUser(UserMixin):
     def __init__(self, username, email=None, google_id=None, is_admin=False, avatar_url=None):
         self.id = username
@@ -28,72 +39,40 @@ class SimpleUser(UserMixin):
         self.google_id = google_id
         self.is_admin = is_admin
         self.avatar_url = avatar_url
-    
+
     def get_user_directory(self):
-        """Get user's root directory"""
-        base_dir = os.path.join(os.getcwd(), 'user_data')
-        user_dir = os.path.join(base_dir, self.username)
-        return user_dir
+        return os.path.join('user_files', self.username)
     
     def ensure_user_directories(self):
-        """Create user directory structure"""
         user_dir = self.get_user_directory()
-        directories = [
-            user_dir,
-            os.path.join(user_dir, 'uploads'),
-            os.path.join(user_dir, 'dicom'),
-            os.path.join(user_dir, 'nifti'),
-            os.path.join(user_dir, 'results'),
-            os.path.join(user_dir, 'temp')
-        ]
-        
-        for directory in directories:
-            os.makedirs(directory, exist_ok=True)
-        
+        if not os.path.exists(user_dir):
+            os.makedirs(user_dir)
         return user_dir
-
-# Create Flask app
-app = Flask(__name__)
-app.config['SECRET_KEY'] = 'dev-secret-key-for-testing-only'
-app.config['WTF_CSRF_ENABLED'] = False
-app.config['MAX_CONTENT_LENGTH'] = 1024 * 1024 * 1024  # 1GB max file size
-
-# Setup login manager
-login_manager = LoginManager()
-login_manager.init_app(app)
-login_manager.login_view = 'login'
-
-# Simple user database (in-memory for development)
-users = {
-    'pokpok': {'password': 'pokpok', 'email': 'pokpok@yuetransfer.local', 'is_admin': True},
-    'aaa': {'password': 'aaa', 'email': 'aaa@yuetransfer.local', 'is_admin': False},
-    'bbb': {'password': 'bbb', 'email': 'bbb@yuetransfer.local', 'is_admin': False},
-    'ccc': {'password': 'ccc', 'email': 'ccc@yuetransfer.local', 'is_admin': False},
-}
-
-# Google OAuth users (separate storage)
-google_users = {}
 
 @login_manager.user_loader
 def load_user(username):
+    # Check traditional users first
     if username in users:
-        return SimpleUser(username, users[username]['email'], is_admin=users[username]['is_admin'])
-    elif username in google_users:
+        user_data = users[username]
+        return SimpleUser(username, is_admin=user_data['is_admin'])
+    
+    # Check Google users (stored by username)
+    if username in google_users:
+        user_data = google_users[username]
         return SimpleUser(
-            username, 
-            google_users[username]['email'], 
-            google_users[username]['google_id'],
-            is_admin=google_users[username].get('is_admin', False),
-            avatar_url=google_users[username].get('avatar_url')
+            username=user_data['username'],
+            email=user_data['email'],
+            google_id=user_data['google_id'],
+            is_admin=user_data.get('is_admin', False),
+            avatar_url=user_data.get('avatar_url')
         )
+    
     return None
 
-# Google OAuth helper functions
 def get_google_user_info(access_token):
     """Get user info from Google using access token"""
     headers = {'Authorization': f'Bearer {access_token}'}
     response = requests.get('https://www.googleapis.com/oauth2/v2/userinfo', headers=headers)
-    
     if response.status_code == 200:
         return response.json()
     return None
@@ -108,45 +87,44 @@ def exchange_code_for_token(code):
         'grant_type': 'authorization_code',
         'redirect_uri': GOOGLE_REDIRECT_URI
     }
-    
     response = requests.post(token_url, data=data)
     if response.status_code == 200:
         return response.json()
     return None
 
-# File operations helper functions
 def get_directory_contents(path):
-    """Get contents of a directory"""
+    """Get directory contents with file/folder information"""
     if not os.path.exists(path):
         return []
     
     contents = []
-    try:
-        for item in os.listdir(path):
-            item_path = os.path.join(path, item)
-            is_dir = os.path.isdir(item_path)
-            
-            # Get file stats
-            stat = os.stat(item_path)
-            size = stat.st_size if not is_dir else 0
-            modified = datetime.fromtimestamp(stat.st_mtime)
-            
-            contents.append({
-                'name': item,
-                'is_directory': is_dir,
-                'size': size,
-                'modified': modified.strftime('%Y-%m-%d %H:%M:%S'),
-                'path': item_path
-            })
-    except PermissionError:
-        pass
+    for item in os.listdir(path):
+        item_path = os.path.join(path, item)
+        is_dir = os.path.isdir(item_path)
+        
+        if is_dir:
+            size = '--'
+            file_type = 'folder'
+        else:
+            size = os.path.getsize(item_path)
+            file_type = 'file'
+        
+        contents.append({
+            'name': item,
+            'is_dir': is_dir,
+            'size': size,
+            'type': file_type
+        })
     
-    # Sort: directories first, then files
-    contents.sort(key=lambda x: (not x['is_directory'], x['name'].lower()))
+    # Sort: folders first, then files, both alphabetically
+    contents.sort(key=lambda x: (not x['is_dir'], x['name'].lower()))
     return contents
 
 def format_file_size(size):
     """Format file size in human readable format"""
+    if size == '--':
+        return '--'
+    
     for unit in ['B', 'KB', 'MB', 'GB']:
         if size < 1024.0:
             return f"{size:.1f} {unit}"
@@ -155,208 +133,175 @@ def format_file_size(size):
 
 def create_folder(path, folder_name):
     """Create a new folder"""
-    folder_name = secure_filename(folder_name)
-    if not folder_name:
-        return False, "Invalid folder name"
-    
-    new_folder_path = os.path.join(path, folder_name)
-    if os.path.exists(new_folder_path):
-        return False, "Folder already exists"
-    
     try:
-        os.makedirs(new_folder_path)
-        return True, "Folder created successfully"
+        folder_path = os.path.join(path, folder_name)
+        if os.path.exists(folder_path):
+            return False, f"Folder '{folder_name}' already exists"
+        
+        os.makedirs(folder_path)
+        return True, f"Folder '{folder_name}' created successfully"
     except Exception as e:
         return False, f"Error creating folder: {str(e)}"
 
 def delete_items(user_root, current_path, items_to_delete):
-    """Delete files and folders"""
-    if not items_to_delete:
-        return False, "No items selected"
-    
-    deleted_count = 0
-    errors = []
-    
-    for item_name in items_to_delete:
-        item_path = os.path.join(user_root, current_path, item_name) if current_path else os.path.join(user_root, item_name)
+    """Delete multiple items (files/folders)"""
+    try:
+        target_dir = user_root
+        if current_path:
+            target_dir = os.path.join(user_root, current_path)
         
         # Security check
-        if not is_safe_path(user_root, item_path):
-            errors.append(f"Access denied: {item_name}")
-            continue
+        if not is_safe_path(user_root, target_dir):
+            return False, "Access denied: Invalid path"
         
-        try:
-            if os.path.isdir(item_path):
-                shutil.rmtree(item_path)
-            else:
-                os.remove(item_path)
-            deleted_count += 1
-        except Exception as e:
-            errors.append(f"Error deleting {item_name}: {str(e)}")
-    
-    if errors:
-        return False, f"Deleted {deleted_count} items. Errors: {'; '.join(errors)}"
-    else:
-        return True, f"Successfully deleted {deleted_count} items"
+        deleted_count = 0
+        for item_name in items_to_delete:
+            item_path = os.path.join(target_dir, item_name)
+            if os.path.exists(item_path):
+                if os.path.isdir(item_path):
+                    shutil.rmtree(item_path)
+                else:
+                    os.remove(item_path)
+                deleted_count += 1
+        
+        if deleted_count == 1:
+            return True, f"1 item deleted successfully"
+        else:
+            return True, f"{deleted_count} items deleted successfully"
+    except Exception as e:
+        return False, f"Error deleting items: {str(e)}"
 
 def rename_item(user_root, current_path, old_name, new_name):
     """Rename a file or folder"""
-    if not old_name or not new_name:
-        return False, "Invalid names provided"
-    
-    new_name = secure_filename(new_name)
-    if not new_name:
-        return False, "Invalid new name"
-    
-    old_path = os.path.join(user_root, current_path, old_name) if current_path else os.path.join(user_root, old_name)
-    new_path = os.path.join(user_root, current_path, new_name) if current_path else os.path.join(user_root, new_name)
-    
-    # Security check
-    if not is_safe_path(user_root, old_path) or not is_safe_path(user_root, new_path):
-        return False, "Access denied"
-    
-    if os.path.exists(new_path):
-        return False, "Item with that name already exists"
-    
     try:
+        target_dir = user_root
+        if current_path:
+            target_dir = os.path.join(user_root, current_path)
+        
+        # Security check
+        if not is_safe_path(user_root, target_dir):
+            return False, "Access denied: Invalid path"
+        
+        old_path = os.path.join(target_dir, old_name)
+        new_path = os.path.join(target_dir, new_name)
+        
+        if not os.path.exists(old_path):
+            return False, f"Item '{old_name}' not found"
+        
+        if os.path.exists(new_path):
+            return False, f"Item '{new_name}' already exists"
+        
         os.rename(old_path, new_path)
-        return True, f"Successfully renamed '{old_name}' to '{new_name}'"
+        return True, f"'{old_name}' renamed to '{new_name}' successfully"
     except Exception as e:
-        return False, f"Error renaming: {str(e)}"
+        return False, f"Error renaming item: {str(e)}"
 
 def is_safe_path(user_root, requested_path):
-    """Check if the requested path is within user's directory"""
-    user_root = os.path.abspath(user_root)
-    requested_path = os.path.abspath(requested_path)
-    return requested_path.startswith(user_root)
+    """Check if the requested path is within the user's directory"""
+    return os.path.abspath(requested_path).startswith(os.path.abspath(user_root))
 
 def get_breadcrumbs(user_root, current_path):
     """Generate breadcrumb navigation"""
-    user_root = os.path.abspath(user_root)
-    current_path = os.path.abspath(current_path)
-    
-    if not current_path.startswith(user_root):
-        return [{'name': 'Root', 'path': None}]
-    
-    # Get relative path from user root
-    rel_path = os.path.relpath(current_path, user_root)
-    
     breadcrumbs = [{'name': 'Root', 'path': None}]
     
-    if rel_path != '.':
-        parts = rel_path.split(os.sep)
-        current_rel_path = ''
-        
-        for part in parts:
-            current_rel_path = os.path.join(current_rel_path, part) if current_rel_path else part
-            breadcrumbs.append({
-                'name': part,
-                'path': current_rel_path.replace(os.sep, '/')
-            })
+    if current_path:
+        path_parts = current_path.split('/')
+        for i, part in enumerate(path_parts):
+            if part:
+                path = '/'.join(path_parts[:i+1])
+                breadcrumbs.append({'name': part, 'path': path})
     
     return breadcrumbs
 
-# Templates
+# HTML Templates
 LOGIN_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - YueTransfer</title>
-    
-    <!-- Bootstrap CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Font Awesome -->
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-    
+    <title>YueTransfer - Login</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         body {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             display: flex;
             align-items: center;
+            justify-content: center;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
-        
         .login-container {
             background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
             border-radius: 20px;
             box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
-            backdrop-filter: blur(10px);
+            padding: 40px;
+            width: 100%;
+            max-width: 400px;
             border: 1px solid rgba(255, 255, 255, 0.2);
         }
-        
         .login-header {
             text-align: center;
-            margin-bottom: 2rem;
+            margin-bottom: 30px;
         }
-        
-        .logo {
-            width: 80px;
-            height: 80px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin: 0 auto 1rem;
+        .login-header h1 {
+            color: #333;
+            font-weight: 700;
+            margin-bottom: 10px;
+            font-size: 2.2rem;
         }
-        
-        .logo i {
-            font-size: 2rem;
-            color: white;
+        .login-header p {
+            color: #666;
+            font-size: 1.1rem;
         }
-        
         .form-control {
             border-radius: 10px;
             border: 2px solid #e1e5e9;
-            padding: 0.75rem 1rem;
+            padding: 12px 15px;
+            font-size: 1rem;
             transition: all 0.3s ease;
         }
-        
         .form-control:focus {
             border-color: #667eea;
             box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
         }
-        
-        .btn-login {
+        .btn-primary {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             border: none;
             border-radius: 10px;
-            padding: 0.75rem 2rem;
+            padding: 12px;
             font-weight: 600;
+            font-size: 1.1rem;
             transition: all 0.3s ease;
         }
-        
-        .btn-login:hover {
+        .btn-primary:hover {
             transform: translateY(-2px);
             box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
         }
-        
         .btn-google {
-            background: #fff;
-            border: 2px solid #ddd;
+            background: #4285f4;
+            border: none;
             border-radius: 10px;
-            padding: 0.75rem 2rem;
+            padding: 12px;
             font-weight: 600;
+            font-size: 1.1rem;
+            color: white;
+            width: 100%;
+            margin-bottom: 15px;
             transition: all 0.3s ease;
-            color: #333;
         }
-        
         .btn-google:hover {
+            background: #357abd;
             transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
-            border-color: #4285f4;
-            color: #4285f4;
+            box-shadow: 0 5px 15px rgba(66, 133, 244, 0.4);
         }
-        
         .divider {
             text-align: center;
-            margin: 1.5rem 0;
+            margin: 20px 0;
             position: relative;
         }
-        
         .divider::before {
             content: '';
             position: absolute;
@@ -366,304 +311,207 @@ LOGIN_TEMPLATE = '''
             height: 1px;
             background: #e1e5e9;
         }
-        
         .divider span {
             background: rgba(255, 255, 255, 0.95);
-            padding: 0 1rem;
-            color: #6c757d;
-            font-size: 0.9rem;
+            padding: 0 15px;
+            color: #666;
+            font-weight: 500;
         }
-        
-        .input-group-text {
-            background: #f8f9fa;
-            border: 2px solid #e1e5e9;
-            border-radius: 10px 0 0 10px;
-        }
-        
-        .form-control.with-icon {
-            border-radius: 0 10px 10px 0;
-            border-left: none;
-        }
-        
         .alert {
             border-radius: 10px;
             border: none;
         }
-        
-        .features {
-            margin-top: 2rem;
-            text-align: center;
+        .input-group-text {
+            background: #f8f9fa;
+            border: 2px solid #e1e5e9;
+            border-right: none;
+            border-radius: 10px 0 0 10px;
         }
-        
-        .feature-item {
-            display: inline-block;
-            margin: 0 1rem;
-            color: #6c757d;
-            font-size: 0.9rem;
-        }
-        
-        .feature-item i {
-            margin-right: 0.5rem;
-            color: #667eea;
-        }
-        
-        @media (max-width: 768px) {
-            .login-container {
-                margin: 1rem;
-                border-radius: 15px;
-            }
-            
-            .feature-item {
-                display: block;
-                margin: 0.5rem 0;
-            }
+        .input-group .form-control {
+            border-left: none;
+            border-radius: 0 10px 10px 0;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="row justify-content-center">
-            <div class="col-lg-5 col-md-7 col-sm-9">
-                <div class="login-container p-5">
-                    <div class="login-header">
-                        <div class="logo">
-                            <i class="fas fa-brain"></i>
-                        </div>
-                        <h2 class="fw-bold text-dark">Welcome Back</h2>
-                        <p class="text-muted">Sign in to YueTransfer - Medical Imaging Platform</p>
+    <div class="login-container">
+        <div class="login-header">
+            <h1><i class="fas fa-cloud-upload-alt"></i> YueTransfer</h1>
+            <p>Secure File Transfer & Management</p>
+        </div>
+        
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                     </div>
-                    
-                                         <!-- Flash Messages -->
-                     {% with messages = get_flashed_messages(with_categories=true) %}
-                         {% if messages %}
-                             {% for category, message in messages %}
-                                 <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
-                                     {{ message }}
-                                     <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                                 </div>
-                             {% endfor %}
-                         {% endif %}
-                     {% endwith %}
-                     
-                     <!-- Google Login Button -->
-                     <div class="d-grid mb-3">
-                         <a href="{{ url_for('google_login') }}" class="btn btn-google">
-                             <i class="fab fa-google me-2"></i>Sign in with Google
-                         </a>
-                     </div>
-                     
-                     <div class="divider">
-                         <span>or</span>
-                     </div>
-                     
-                     <form method="POST">
-                        <div class="mb-3">
-                            <label for="username" class="form-label fw-semibold">Username</label>
-                            <div class="input-group">
-                                <span class="input-group-text">
-                                    <i class="fas fa-user text-muted"></i>
-                                </span>
-                                <input type="text" 
-                                       class="form-control with-icon" 
-                                       id="username" 
-                                       name="username" 
-                                       placeholder="Enter your username"
-                                       required
-                                       autofocus>
-                            </div>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label for="password" class="form-label fw-semibold">Password</label>
-                            <div class="input-group">
-                                <span class="input-group-text">
-                                    <i class="fas fa-lock text-muted"></i>
-                                </span>
-                                <input type="password" 
-                                       class="form-control with-icon" 
-                                       id="password" 
-                                       name="password" 
-                                       placeholder="Enter your password"
-                                       required>
-                            </div>
-                        </div>
-                        
-                        <div class="mb-3 form-check">
-                            <input type="checkbox" class="form-check-input" id="remember" name="remember">
-                            <label class="form-check-label" for="remember">
-                                Remember me
-                            </label>
-                        </div>
-                        
-                        <div class="d-grid">
-                            <button type="submit" class="btn btn-primary btn-login text-white">
-                                <i class="fas fa-sign-in-alt me-2"></i>
-                                Sign In
-                            </button>
-                        </div>
-                    </form>
-                    
-                    <div class="features">
-                        <div class="feature-item">
-                            <i class="fas fa-shield-alt"></i>
-                            Secure
-                        </div>
-                        <div class="feature-item">
-                            <i class="fas fa-server"></i>
-                            SFTP Transfer
-                        </div>
-                        <div class="feature-item">
-                            <i class="fas fa-brain"></i>
-                            TotalSegmentator
-                        </div>
-                    </div>
-                    
-                    <div class="text-center mt-4">
-                        <small class="text-muted">
-                            Need access? Contact your administrator<br>
-                            <i class="fas fa-envelope me-1"></i>
-                            <a href="mailto:yuemedical@gmail.com" class="text-decoration-none">yuemedical@gmail.com</a>
-                        </small>
-                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+        
+        <!-- Google OAuth Button -->
+        <a href="{{ url_for('google_login') }}" class="btn btn-google">
+            <i class="fab fa-google"></i> Sign in with Google
+        </a>
+        
+        <!-- Divider -->
+        <div class="divider">
+            <span>or</span>
+        </div>
+        
+        <!-- Traditional Login Form -->
+        <form method="POST">
+            <div class="mb-3">
+                <div class="input-group">
+                    <span class="input-group-text">
+                        <i class="fas fa-user"></i>
+                    </span>
+                    <input type="text" class="form-control" name="username" placeholder="Username" required autofocus>
                 </div>
             </div>
-        </div>
-    </div>
-    
-    <!-- Default Admin Credentials Notice (Development Only) -->
-    <div class="position-fixed bottom-0 end-0 m-3">
-        <div class="card border-warning" style="max-width: 300px;">
-            <div class="card-header bg-warning text-dark">
-                <i class="fas fa-exclamation-triangle me-1"></i>
-                Development Mode
+            <div class="mb-4">
+                <div class="input-group">
+                    <span class="input-group-text">
+                        <i class="fas fa-lock"></i>
+                    </span>
+                    <input type="password" class="form-control" name="password" placeholder="Password" required>
+                </div>
             </div>
-            <div class="card-body small">
-                <strong>Available Users:</strong><br>
-                Admin: <code>pokpok / pokpok</code><br>
-                Users: <code>aaa / aaa</code>, <code>bbb / bbb</code>, <code>ccc / ccc</code><br>
-                <small class="text-muted">Change passwords after first login!</small>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Bootstrap JS -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    
-    <script>
-        // Auto-hide alerts after 5 seconds
-        setTimeout(function() {
-            var alerts = document.querySelectorAll('.alert');
-            alerts.forEach(function(alert) {
-                var bsAlert = new bootstrap.Alert(alert);
-                bsAlert.close();
-            });
-        }, 5000);
+            <button type="submit" class="btn btn-primary w-100">
+                <i class="fas fa-sign-in-alt"></i> Sign In
+            </button>
+        </form>
         
-        // Focus username field
-        document.getElementById('username').focus();
-    </script>
+        <div class="text-center mt-4">
+            <small class="text-muted">
+                <i class="fas fa-shield-alt"></i> Secure authentication powered by YueTransfer
+            </small>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
 '''
 
 DASHBOARD_TEMPLATE = '''
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>YueTransfer Dashboard</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YueTransfer - Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: #f8f9fa;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .navbar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .navbar-brand {
+            font-weight: 700;
+            font-size: 1.5rem;
+        }
+        .card {
+            border: none;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+            transition: transform 0.3s ease;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 10px;
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        .stats-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+    </style>
 </head>
-<body class="bg-light">
-    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark">
         <div class="container">
-            <a class="navbar-brand" href="#">🧠 YueTransfer</a>
+            <a class="navbar-brand" href="#">
+                <i class="fas fa-cloud-upload-alt"></i> YueTransfer
+            </a>
             <div class="navbar-nav ms-auto">
-                <span class="navbar-text me-3">Welcome {{ current_user.username }}!</span>
-                <a href="{{ url_for('logout') }}" class="btn btn-outline-light btn-sm">Logout</a>
+                <span class="navbar-text me-3">
+                    <i class="fas fa-user"></i> Welcome, {{ current_user.username }}
+                    {% if current_user.email %}
+                        ({{ current_user.email }})
+                    {% endif %}
+                </span>
+                <a class="nav-link" href="{{ url_for('logout') }}">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </a>
             </div>
         </div>
     </nav>
-    
+
     <div class="container mt-4">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                    <div class="alert alert-{{ 'success' if category == 'success' else 'danger' }} alert-dismissible fade show">
-                        {{ message }}
-                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        <div class="row">
+            <div class="col-md-4">
+                <div class="card stats-card mb-4">
+                    <div class="card-body text-center">
+                        <i class="fas fa-folder fa-3x mb-3"></i>
+                        <h4>File Management</h4>
+                        <p class="mb-0">Browse and manage your files</p>
                     </div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
-        
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card stats-card mb-4">
+                    <div class="card-body text-center">
+                        <i class="fas fa-upload fa-3x mb-3"></i>
+                        <h4>Upload Files</h4>
+                        <p class="mb-0">Upload large files securely</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card stats-card mb-4">
+                    <div class="card-body text-center">
+                        <i class="fas fa-cogs fa-3x mb-3"></i>
+                        <h4>Processing</h4>
+                        <p class="mb-0">Process files with TotalSegmentator</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="row">
             <div class="col-12">
                 <div class="card">
                     <div class="card-header">
-                        <h4><i class="fas fa-tachometer-alt"></i> Dashboard</h4>
+                        <h5 class="mb-0">
+                            <i class="fas fa-tachometer-alt"></i> Quick Actions
+                        </h5>
                     </div>
                     <div class="card-body">
                         <div class="row">
-                            <div class="col-md-4">
-                                <div class="card border-primary">
-                                    <div class="card-body text-center">
-                                        <i class="fas fa-folder fa-3x text-primary mb-3"></i>
-                                        <h5>File Browser</h5>
-                                        <p>Browse your files and folders</p>
-                                        <a href="{{ url_for('file_browser') }}" class="btn btn-primary">
-                                            <i class="fas fa-eye"></i> Browse Files
-                                        </a>
-                                    </div>
-                                </div>
+                            <div class="col-md-6">
+                                <a href="{{ url_for('file_browser') }}" class="btn btn-primary btn-lg w-100 mb-3">
+                                    <i class="fas fa-folder-open"></i> Browse Files
+                                </a>
                             </div>
-                            <div class="col-md-4">
-                                <div class="card border-success">
-                                    <div class="card-body text-center">
-                                        <i class="fas fa-upload fa-3x text-success mb-3"></i>
-                                        <h5>Upload Files</h5>
-                                        <p>Upload DICOM and NIfTI files</p>
-                                        <button class="btn btn-success" disabled>
-                                            <i class="fas fa-upload"></i> Coming Soon
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="card border-info">
-                                    <div class="card-body text-center">
-                                        <i class="fas fa-brain fa-3x text-info mb-3"></i>
-                                        <h5>TotalSegmentator</h5>
-                                        <p>Process medical images</p>
-                                        <button class="btn btn-info" disabled>
-                                            <i class="fas fa-cogs"></i> Coming Soon
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="row mt-4">
-                            <div class="col-12">
-                                <div class="card">
-                                    <div class="card-header">
-                                        <h5><i class="fas fa-info-circle"></i> User Directory Structure</h5>
-                                    </div>
-                                    <div class="card-body">
-                                        <p><strong>Your files are stored in:</strong></p>
-                                        <code>{{ user_directory }}</code>
-                                        <div class="mt-3">
-                                            <h6>Directory Structure:</h6>
-                                            <ul>
-                                                <li><code>uploads/</code> - General file uploads</li>
-                                                <li><code>dicom/</code> - DICOM medical images</li>
-                                                <li><code>nifti/</code> - NIfTI format files</li>
-                                                <li><code>results/</code> - TotalSegmentator results</li>
-                                                <li><code>temp/</code> - Temporary files</li>
-                                            </ul>
-                                        </div>
-                                    </div>
-                                </div>
+                            <div class="col-md-6">
+                                <a href="#" class="btn btn-outline-primary btn-lg w-100 mb-3">
+                                    <i class="fas fa-upload"></i> Upload Files
+                                </a>
                             </div>
                         </div>
                     </div>
@@ -671,343 +519,381 @@ DASHBOARD_TEMPLATE = '''
             </div>
         </div>
     </div>
-    
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
 '''
 
 FILE_BROWSER_TEMPLATE = '''
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>File Browser - YueTransfer</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YueTransfer - File Browser</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
-        .folder-link {
-            color: inherit;
-            text-decoration: none;
-            cursor: pointer;
+        body {
+            background: #f8f9fa;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
-        .folder-link:hover {
-            color: #0d6efd;
-            text-decoration: underline;
+        .navbar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
-        .breadcrumb-item a {
-            text-decoration: none;
+        .card {
+            border: none;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.08);
         }
-        .breadcrumb-item a:hover {
-            text-decoration: underline;
+        .breadcrumb {
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
         }
-        .file-checkbox {
-            margin-right: 10px;
+        .file-item {
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 10px;
+            border: 1px solid #e9ecef;
+            transition: all 0.3s ease;
+        }
+        .file-item:hover {
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            transform: translateY(-2px);
+        }
+        .file-item.selected {
+            background: #e3f2fd;
+            border-color: #2196f3;
+        }
+        .btn-group-sm .btn {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.875rem;
         }
         .bulk-actions {
-            background-color: #f8f9fa;
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
             border: 1px solid #dee2e6;
-            border-radius: 5px;
-            padding: 10px;
-            margin-bottom: 15px;
-        }
-        .selected-count {
-            font-weight: bold;
-            color: #0d6efd;
         }
     </style>
 </head>
-<body class="bg-light">
-    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark">
         <div class="container">
-            <a class="navbar-brand" href="{{ url_for('dashboard') }}">🧠 YueTransfer</a>
+            <a class="navbar-brand" href="{{ url_for('dashboard') }}">
+                <i class="fas fa-cloud-upload-alt"></i> YueTransfer
+            </a>
             <div class="navbar-nav ms-auto">
-                <span class="navbar-text me-3">{{ current_user.username }}</span>
-                <a href="{{ url_for('logout') }}" class="btn btn-outline-light btn-sm">Logout</a>
+                <span class="navbar-text me-3">
+                    <i class="fas fa-user"></i> {{ current_user.username }}
+                </span>
+                <a class="nav-link" href="{{ url_for('logout') }}">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </a>
             </div>
         </div>
     </nav>
-    
+
     <div class="container mt-4">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                    <div class="alert alert-{{ 'success' if category == 'success' else 'danger' }} alert-dismissible fade show">
-                        {{ message }}
-                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">
+                            <i class="fas fa-folder-open"></i> File Browser
+                        </h5>
+                        <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#createFolderModal">
+                            <i class="fas fa-folder-plus"></i> New Folder
+                        </button>
                     </div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
-        
-        <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h4><i class="fas fa-folder"></i> File Browser</h4>
-                <div>
-                    <button class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#createFolderModal">
-                        <i class="fas fa-plus"></i> New Folder
-                    </button>
-                    <a href="{{ url_for('dashboard') }}" class="btn btn-secondary btn-sm">
-                        <i class="fas fa-arrow-left"></i> Back to Dashboard
-                    </a>
-                </div>
-            </div>
-            <div class="card-body">
-                <div class="mb-3">
-                    <nav aria-label="breadcrumb">
-                        <ol class="breadcrumb">
-                            <li class="breadcrumb-item">
-                                <i class="fas fa-home"></i> {{ current_user.username }}
-                            </li>
-                                                         {% for crumb in breadcrumbs %}
-                                 {% if loop.last %}
-                                     <li class="breadcrumb-item active">{{ crumb.name }}</li>
-                                 {% else %}
-                                     <li class="breadcrumb-item">
-                                         {% if crumb.path is none %}
-                                             <a href="{{ url_for('file_browser') }}">{{ crumb.name }}</a>
-                                         {% else %}
-                                             <a href="{{ url_for('file_browser', path=crumb.path) }}">{{ crumb.name }}</a>
-                                         {% endif %}
-                                     </li>
-                                 {% endif %}
-                             {% endfor %}
-                        </ol>
-                    </nav>
-                </div>
-                
-                <!-- Bulk Actions -->
-                <div class="bulk-actions" id="bulkActions" style="display: none;">
-                    <div class="row align-items-center">
-                        <div class="col-md-6">
-                            <span class="selected-count" id="selectedCount">0 items selected</span>
+                    <div class="card-body">
+                        <!-- Breadcrumbs -->
+                        <nav aria-label="breadcrumb">
+                            <ol class="breadcrumb">
+                                {% for breadcrumb in breadcrumbs %}
+                                    <li class="breadcrumb-item">
+                                        {% if breadcrumb.path is none %}
+                                            <a href="{{ url_for('file_browser') }}">{{ breadcrumb.name }}</a>
+                                        {% else %}
+                                            <a href="{{ url_for('file_browser', path=breadcrumb.path) }}">{{ breadcrumb.name }}</a>
+                                        {% endif %}
+                                    </li>
+                                {% endfor %}
+                            </ol>
+                        </nav>
+
+                        <!-- Bulk Actions Panel -->
+                        <div class="bulk-actions" id="bulkActions" style="display: none;">
+                            <div class="row align-items-center">
+                                <div class="col-md-6">
+                                    <span id="selectedCount">0 items selected</span>
+                                </div>
+                                <div class="col-md-6 text-end">
+                                    <button class="btn btn-danger btn-sm" onclick="deleteSelected()">
+                                        <i class="fas fa-trash"></i> Delete Selected
+                                    </button>
+                                    <button class="btn btn-secondary btn-sm" onclick="clearSelection()">
+                                        <i class="fas fa-times"></i> Clear
+                                    </button>
+                                </div>
+                            </div>
                         </div>
-                        <div class="col-md-6 text-end">
-                            <button class="btn btn-danger btn-sm" onclick="deleteSelected()">
-                                <i class="fas fa-trash"></i> Delete Selected
-                            </button>
-                            <button class="btn btn-warning btn-sm" onclick="renameSelected()">
-                                <i class="fas fa-edit"></i> Rename
-                            </button>
-                        </div>
-                    </div>
-                </div>
-                
-                {% if contents %}
-                    <form id="fileForm" method="POST" action="{{ url_for('bulk_operations') }}">
-                        <input type="hidden" name="current_path" value="{{ current_path }}">
-                        <div class="table-responsive">
-                            <table class="table table-hover">
-                                <thead>
-                                    <tr>
-                                        <th width="50">
-                                            <input type="checkbox" id="selectAll" class="form-check-input">
-                                        </th>
-                                        <th>Name</th>
-                                        <th>Type</th>
-                                        <th>Size</th>
-                                        <th>Modified</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {% for item in contents %}
-                                    <tr>
-                                        <td>
-                                            <input type="checkbox" name="selected_items" value="{{ item.name }}" 
-                                                   class="form-check-input file-checkbox" 
-                                                   data-item-name="{{ item.name }}">
-                                        </td>
-                                        <td>
-                                            {% if item.is_directory %}
-                                                <a href="{{ url_for('file_browser', path=item.relative_path) }}" class="folder-link">
-                                                    <i class="fas fa-folder text-warning"></i>
+
+                        <!-- File List -->
+                        <div id="fileList">
+                            {% for item in files %}
+                                <div class="file-item d-flex align-items-center">
+                                    <div class="form-check me-3">
+                                        <input class="form-check-input file-checkbox" type="checkbox" value="{{ item.name }}" onchange="updateSelection()">
+                                    </div>
+                                    <div class="flex-grow-1">
+                                        <div class="d-flex align-items-center">
+                                            <i class="fas fa-{{ 'folder' if item.is_dir else 'file' }} me-2 text-{{ 'warning' if item.is_dir else 'primary' }}"></i>
+                                            {% if item.is_dir %}
+                                                <a href="{{ url_for('file_browser', path=current_path + '/' + item.name if current_path else item.name) }}" class="text-decoration-none">
                                                     {{ item.name }}
                                                 </a>
                                             {% else %}
-                                                <i class="fas fa-file text-primary"></i>
-                                                {{ item.name }}
+                                                <span>{{ item.name }}</span>
                                             {% endif %}
-                                        </td>
-                                        <td>
-                                            {% if item.is_directory %}
-                                                <span class="badge bg-warning">Folder</span>
-                                            {% else %}
-                                                <span class="badge bg-primary">File</span>
-                                            {% endif %}
-                                        </td>
-                                        <td>
-                                            {% if not item.is_directory %}
-                                                {{ item.size_formatted }}
-                                            {% else %}
-                                                -
-                                            {% endif %}
-                                        </td>
-                                        <td>{{ item.modified }}</td>
-                                    </tr>
-                                    {% endfor %}
-                                </tbody>
-                            </table>
+                                        </div>
+                                        <small class="text-muted">
+                                            {{ format_file_size(item.size) }}
+                                        </small>
+                                    </div>
+                                    <div class="btn-group btn-group-sm">
+                                        {% if not item.is_dir %}
+                                            <button class="btn btn-outline-primary" onclick="renameItem('{{ item.name }}')">
+                                                <i class="fas fa-edit"></i>
+                                            </button>
+                                        {% endif %}
+                                        <button class="btn btn-outline-danger" onclick="deleteItem('{{ item.name }}')">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            {% else %}
+                                <div class="text-center text-muted py-5">
+                                    <i class="fas fa-folder-open fa-3x mb-3"></i>
+                                    <p>No files or folders found</p>
+                                </div>
+                            {% endfor %}
                         </div>
-                    </form>
-                {% else %}
-                    <div class="text-center py-5">
-                        <i class="fas fa-folder-open fa-4x text-muted mb-3"></i>
-                        <h5 class="text-muted">This folder is empty</h5>
-                        <p class="text-muted">Create a new folder or upload some files to get started.</p>
                     </div>
-                {% endif %}
+                </div>
             </div>
         </div>
     </div>
-    
+
     <!-- Create Folder Modal -->
     <div class="modal fade" id="createFolderModal" tabindex="-1">
         <div class="modal-dialog">
             <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-folder-plus"></i> Create New Folder
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
                 <form method="POST" action="{{ url_for('create_folder_route') }}">
-                    <input type="hidden" name="current_path" value="{{ current_path }}">
-                    <div class="modal-header">
-                        <h5 class="modal-title">Create New Folder</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                    </div>
                     <div class="modal-body">
                         <div class="mb-3">
                             <label for="folderName" class="form-label">Folder Name</label>
                             <input type="text" class="form-control" id="folderName" name="folder_name" required autofocus>
                         </div>
+                        <input type="hidden" name="current_path" value="{{ current_path }}">
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" class="btn btn-success">Create Folder</button>
+                        <button type="submit" class="btn btn-primary">Create Folder</button>
                     </div>
                 </form>
             </div>
         </div>
     </div>
-    
+
     <!-- Rename Modal -->
     <div class="modal fade" id="renameModal" tabindex="-1">
         <div class="modal-dialog">
             <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-edit"></i> Rename Item
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
                 <form method="POST" action="{{ url_for('rename_item_route') }}">
-                    <input type="hidden" name="current_path" value="{{ current_path }}">
-                    <input type="hidden" name="old_name" id="renameOldName">
-                    <div class="modal-header">
-                        <h5 class="modal-title">Rename Item</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                    </div>
                     <div class="modal-body">
+                        <div class="mb-3">
+                            <label for="oldName" class="form-label">Current Name</label>
+                            <input type="text" class="form-control" id="oldName" name="old_name" readonly>
+                        </div>
                         <div class="mb-3">
                             <label for="newName" class="form-label">New Name</label>
                             <input type="text" class="form-control" id="newName" name="new_name" required autofocus>
                         </div>
+                        <input type="hidden" name="current_path" value="{{ current_path }}">
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" class="btn btn-warning">Rename</button>
+                        <button type="submit" class="btn btn-primary">Rename</button>
                     </div>
                 </form>
             </div>
         </div>
     </div>
-    
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        // Select all functionality
-        document.getElementById('selectAll').addEventListener('change', function() {
-            const checkboxes = document.querySelectorAll('.file-checkbox');
-            checkboxes.forEach(checkbox => {
-                checkbox.checked = this.checked;
-            });
-            updateBulkActions();
+        // Auto-focus on folder name input
+        document.getElementById('createFolderModal').addEventListener('shown.bs.modal', function () {
+            document.getElementById('folderName').focus();
         });
-        
-        // Individual checkbox functionality
-        document.querySelectorAll('.file-checkbox').forEach(checkbox => {
-            checkbox.addEventListener('change', updateBulkActions);
+
+        // Auto-focus on new name input
+        document.getElementById('renameModal').addEventListener('shown.bs.modal', function () {
+            document.getElementById('newName').focus();
         });
-        
-        function updateBulkActions() {
-            const selectedCheckboxes = document.querySelectorAll('.file-checkbox:checked');
+
+        function updateSelection() {
+            const checkboxes = document.querySelectorAll('.file-checkbox:checked');
             const bulkActions = document.getElementById('bulkActions');
             const selectedCount = document.getElementById('selectedCount');
             
-            if (selectedCheckboxes.length > 0) {
+            if (checkboxes.length > 0) {
                 bulkActions.style.display = 'block';
-                selectedCount.textContent = selectedCheckboxes.length + ' item(s) selected';
+                selectedCount.textContent = `${checkboxes.length} item${checkboxes.length > 1 ? 's' : ''} selected`;
             } else {
                 bulkActions.style.display = 'none';
             }
         }
-        
+
+        function clearSelection() {
+            document.querySelectorAll('.file-checkbox').forEach(checkbox => {
+                checkbox.checked = false;
+            });
+            updateSelection();
+        }
+
         function deleteSelected() {
-            if (confirm('Are you sure you want to delete the selected items? This action cannot be undone.')) {
-                const form = document.getElementById('fileForm');
+            const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+            const selectedItems = Array.from(checkboxes).map(cb => cb.value);
+            
+            if (selectedItems.length > 0 && confirm(`Are you sure you want to delete ${selectedItems.length} item(s)?`)) {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = '{{ url_for("bulk_operations") }}';
+                
                 const actionInput = document.createElement('input');
                 actionInput.type = 'hidden';
                 actionInput.name = 'action';
                 actionInput.value = 'delete';
                 form.appendChild(actionInput);
+                
+                const pathInput = document.createElement('input');
+                pathInput.type = 'hidden';
+                pathInput.name = 'current_path';
+                pathInput.value = '{{ current_path }}';
+                form.appendChild(pathInput);
+                
+                selectedItems.forEach(item => {
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = 'selected_items';
+                    input.value = item;
+                    form.appendChild(input);
+                });
+                
+                document.body.appendChild(form);
                 form.submit();
             }
         }
-        
-        function renameSelected() {
-            const selectedCheckboxes = document.querySelectorAll('.file-checkbox:checked');
-            if (selectedCheckboxes.length === 1) {
-                const itemName = selectedCheckboxes[0].getAttribute('data-item-name');
-                document.getElementById('renameOldName').value = itemName;
-                document.getElementById('newName').value = itemName;
-                new bootstrap.Modal(document.getElementById('renameModal')).show();
-            } else {
-                alert('Please select exactly one item to rename.');
+
+        function deleteItem(itemName) {
+            if (confirm(`Are you sure you want to delete "${itemName}"?`)) {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = '{{ url_for("bulk_operations") }}';
+                
+                const actionInput = document.createElement('input');
+                actionInput.type = 'hidden';
+                actionInput.name = 'action';
+                actionInput.value = 'delete';
+                form.appendChild(actionInput);
+                
+                const pathInput = document.createElement('input');
+                pathInput.type = 'hidden';
+                pathInput.name = 'current_path';
+                pathInput.value = '{{ current_path }}';
+                form.appendChild(pathInput);
+                
+                const itemInput = document.createElement('input');
+                itemInput.type = 'hidden';
+                itemInput.name = 'selected_items';
+                itemInput.value = itemName;
+                form.appendChild(itemInput);
+                
+                document.body.appendChild(form);
+                form.submit();
             }
         }
-        
-        // Auto-focus on folder name input when modal opens
-        document.getElementById('createFolderModal').addEventListener('shown.bs.modal', function() {
-            document.getElementById('folderName').focus();
-        });
-        
-        document.getElementById('renameModal').addEventListener('shown.bs.modal', function() {
-            document.getElementById('newName').focus();
-        });
+
+        function renameItem(itemName) {
+            document.getElementById('oldName').value = itemName;
+            document.getElementById('newName').value = itemName;
+            new bootstrap.Modal(document.getElementById('renameModal')).show();
+        }
+
+        // Select all functionality
+        function selectAll() {
+            const checkboxes = document.querySelectorAll('.file-checkbox');
+            const selectAllCheckbox = document.getElementById('selectAll');
+            
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = selectAllCheckbox.checked;
+            });
+            updateSelection();
+        }
     </script>
 </body>
 </html>
 '''
 
-# Routes
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
+        username = request.form.get('username')
+        password = request.form.get('password')
         
-        if username in users and users[username]['password'] == password:
-            user = SimpleUser(username, users[username]['email'], is_admin=users[username]['is_admin'])
+        if username in users and check_password_hash(users[username]['password'], password):
+            user = SimpleUser(username, is_admin=users[username]['is_admin'])
             login_user(user)
-            
-            # Create user directories on login
-            user.ensure_user_directories()
-            
             return redirect(url_for('dashboard'))
         else:
-            flash('Invalid username or password')
+            flash('Invalid username or password', 'error')
     
     return render_template_string(LOGIN_TEMPLATE)
 
 @app.route('/login/google')
 def google_login():
-    """Initiate Google OAuth login"""
-    google_auth_url = (
-        f"https://accounts.google.com/o/oauth2/auth?"
-        f"client_id={GOOGLE_CLIENT_ID}&"
-        f"redirect_uri={GOOGLE_REDIRECT_URI}&"
-        f"scope=email profile&"
-        f"response_type=code&"
-        f"access_type=offline"
-    )
-    return redirect(google_auth_url)
+    """Redirect to Google OAuth"""
+    google_auth_url = f"https://accounts.google.com/o/oauth2/v2/auth"
+    params = {
+        'client_id': GOOGLE_CLIENT_ID,
+        'redirect_uri': GOOGLE_REDIRECT_URI,
+        'scope': 'openid email profile',
+        'response_type': 'code',
+        'access_type': 'offline'
+    }
+    
+    auth_url = f"{google_auth_url}?{'&'.join([f'{k}={v}' for k, v in params.items()])}"
+    return redirect(auth_url)
 
 @app.route('/login/google/authorized')
 def google_authorized():
@@ -1023,113 +909,104 @@ def google_authorized():
         flash('No authorization code received from Google', 'error')
         return redirect(url_for('login'))
     
-    # Exchange code for access token
+    # Exchange code for token
     token_data = exchange_code_for_token(code)
-    if not token_data or 'access_token' not in token_data:
-        flash('Failed to get access token from Google', 'error')
+    if not token_data:
+        flash('Failed to exchange code for token', 'error')
+        return redirect(url_for('login'))
+    
+    access_token = token_data.get('access_token')
+    if not access_token:
+        flash('No access token received from Google', 'error')
         return redirect(url_for('login'))
     
     # Get user info from Google
-    user_info = get_google_user_info(token_data['access_token'])
+    user_info = get_google_user_info(access_token)
     if not user_info:
         flash('Failed to get user info from Google', 'error')
         return redirect(url_for('login'))
     
-    google_id = user_info['id']
-    email = user_info['email']
-    name = user_info.get('name', email.split('@')[0])
+    # Extract user data
+    google_id = user_info.get('id')
+    email = user_info.get('email')
+    name = user_info.get('name', email)
     avatar_url = user_info.get('picture')
     
-    # Check if user exists
-    username = f"google_{google_id}"
-    if username not in google_users:
+    # Create username from email or Google ID
+    username = f"google_{email.split('@')[0]}" if email else f"google_{google_id[:8]}"
+    
+    # Create or get user (store by username)
+    if username in google_users:
+        user_data = google_users[username]
+    else:
         # Create new Google user
-        google_users[username] = {
+        user_data = {
+            'username': username,
             'email': email,
             'google_id': google_id,
-            'name': name,
-            'avatar_url': avatar_url,
-            'is_admin': email == 'yuemedical@gmail.com'  # Make your email admin
+            'is_admin': False,  # Default to regular user
+            'avatar_url': avatar_url
         }
+        google_users[username] = user_data
     
     # Create user object and login
     user = SimpleUser(
-        username=username,
-        email=email,
-        google_id=google_id,
-        is_admin=google_users[username]['is_admin'],
-        avatar_url=avatar_url
+        username=user_data['username'],
+        email=user_data['email'],
+        google_id=user_data['google_id'],
+        is_admin=user_data.get('is_admin', False),
+        avatar_url=user_data.get('avatar_url')
     )
     
     login_user(user)
-    
-    # Create user directories
-    user.ensure_user_directories()
-    
-    flash(f'Welcome {name}! Successfully logged in with Google.', 'success')
+    flash(f'Welcome, {name}!', 'success')
     return redirect(url_for('dashboard'))
 
 @app.route('/logout')
 @login_required
 def logout():
     logout_user()
+    flash('You have been logged out successfully', 'success')
     return redirect(url_for('login'))
 
 @app.route('/')
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    user_directory = current_user.get_user_directory()
-    return render_template_string(DASHBOARD_TEMPLATE, 
-                                current_user=current_user, 
-                                user_directory=user_directory)
+    current_user.ensure_user_directories()
+    return render_template_string(DASHBOARD_TEMPLATE)
 
 @app.route('/files')
 @app.route('/files/<path:path>')
 @login_required
 def file_browser(path=''):
+    current_user.ensure_user_directories()
     user_root = current_user.get_user_directory()
     
-    # Build the requested path
+    # Build target directory
     if path:
-        # Decode URL path and convert forward slashes to OS path separators
-        decoded_path = unquote(path)
-        requested_path = os.path.join(user_root, decoded_path.replace('/', os.sep))
+        target_dir = os.path.join(user_root, path)
     else:
-        requested_path = user_root
+        target_dir = user_root
     
-    # Security check: ensure path is within user directory
-    if not is_safe_path(user_root, requested_path):
+    # Security check
+    if not is_safe_path(user_root, target_dir):
         flash('Access denied: Invalid path', 'error')
         return redirect(url_for('file_browser'))
     
-    # Check if path exists
-    if not os.path.exists(requested_path):
-        flash('Directory not found', 'error')
-        return redirect(url_for('file_browser'))
-    
     # Get directory contents
-    contents = get_directory_contents(requested_path)
-    
-    # Add relative paths for navigation
-    for item in contents:
-        if item['is_directory']:
-            # Create relative path from user root
-            item_rel_path = os.path.relpath(item['path'], user_root)
-            item['relative_path'] = item_rel_path.replace(os.sep, '/')
-        
-        # Format file sizes
-        if not item['is_directory']:
-            item['size_formatted'] = format_file_size(item['size'])
+    files = get_directory_contents(target_dir)
     
     # Generate breadcrumbs
-    breadcrumbs = get_breadcrumbs(user_root, requested_path)
+    breadcrumbs = get_breadcrumbs(user_root, path)
     
-    return render_template_string(FILE_BROWSER_TEMPLATE, 
-                                current_user=current_user,
-                                contents=contents,
-                                breadcrumbs=breadcrumbs,
-                                current_path=path)
+    return render_template_string(
+        FILE_BROWSER_TEMPLATE,
+        files=files,
+        current_path=path,
+        breadcrumbs=breadcrumbs,
+        format_file_size=format_file_size
+    )
 
 @app.route('/create_folder', methods=['POST'])
 @login_required
@@ -1139,7 +1016,6 @@ def create_folder_route():
     
     if not folder_name:
         flash('Folder name is required', 'error')
-        # Handle empty path redirect properly
         if current_path:
             return redirect(url_for('file_browser', path=current_path))
         else:
@@ -1147,10 +1023,9 @@ def create_folder_route():
     
     user_root = current_user.get_user_directory()
     
-    # Determine target directory
+    # Build target directory
     if current_path:
-        decoded_path = unquote(current_path)
-        target_dir = os.path.join(user_root, decoded_path.replace('/', os.sep))
+        target_dir = os.path.join(user_root, current_path)
     else:
         target_dir = user_root
     
@@ -1255,4 +1130,4 @@ if __name__ == '__main__':
     print("   - Port 5000 (as in step2)")
     print("=" * 80)
     
-    app.run(host='127.0.0.1', port=5000, debug=True) 
+    app.run(host='127.0.0.1', port=5000, debug=True)

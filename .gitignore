@@ -11,6 +11,7 @@ test_output/
 web3d_export/
 temp/
 __pycache__/
+uploads/
 
 # OS specific
 .DS_Store

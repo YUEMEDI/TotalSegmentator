@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  yuetransfer:
+    build: .
+    container_name: yuetransfer
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./user_files:/app/user_files
+      - ./logs:/app/logs
+    environment:
+      - FLASK_ENV=production
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - yuetransfer-network
+
+  # Optional: Add a reverse proxy with nginx for production
+  nginx:
+    image: nginx:alpine
+    container_name: yuetransfer-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - yuetransfer
+    restart: unless-stopped
+    networks:
+      - yuetransfer-network
+    profiles:
+      - production
+
+networks:
+  yuetransfer-network:
+    driver: bridge
+
+volumes:
+  user_files:
+    driver: local
+  logs:
+    driver: local

@@ -1,348 +1,246 @@
-# YueTransfer - Medical Imaging Transfer & Processing Platform
+# YueTransfer - Secure File Transfer & Management System
 
-A comprehensive standalone SFTP + Web interface application for handling large medical imaging files with TotalSegmentator integration.
+A standalone web application for secure file transfer and management with Google OAuth integration, designed for medical image processing workflows.
 
-## 🎯 Features
+## 🚀 Quick Start
 
-### **File Transfer & Management**
-- **SFTP Server**: Secure file transfer for large DICOM datasets (bypasses browser limitations)
-- **Web Interface**: Modern, responsive UI for file management
-- **Multi-User Support**: Each user has isolated storage space with quotas
-- **File Browser**: Intuitive navigation with search, filtering, and bulk operations
-- **Drag & Drop Upload**: Easy file upload through web interface
+### Prerequisites
+- **Python 3.8+** (Windows, Mac, Linux) - OR - **Docker** (recommended)
+- **Internet Connection** (for Google OAuth and CDN resources)
+- **Web Browser** (Chrome, Firefox, Safari, Edge)
+- **Google OAuth credentials** (optional, for Google login)
 
-### **TotalSegmentator Integration**
-- **Background Processing**: Asynchronous segmentation jobs
-- **Multiple Tasks**: Support for various TotalSegmentator tasks (total, lung_vessels, etc.)
-- **Job Management**: Track progress, view results, cancel jobs
-- **Batch Processing**: Process multiple files simultaneously
+### Installation Options
 
-### **User Management**
-- **Role-Based Access**: Users and administrators with different permissions
-- **Storage Quotas**: Configurable storage limits per user
-- **User Isolation**: Complete file separation between users
-- **Admin Panel**: Comprehensive user and system management
+#### **🐳 Option 1: Docker (Recommended)**
+```bash
+# Windows
+docker-run.bat
 
-### **Professional Features**
-- **Security**: CSRF protection, secure sessions, user isolation
-- **Monitoring**: System health, storage usage, job tracking
-- **Logging**: Comprehensive audit trail
-- **Error Handling**: Graceful error pages and API responses
+# Mac/Linux
+chmod +x docker-run.sh
+./docker-run.sh
 
-## 🏗️ Architecture
+# Universal
+docker-compose up -d
+```
+**Access**: http://localhost:5000
+
+#### **🐍 Option 2: Python Native**
+
+##### **Windows:**
+1. **Install Python**: Download from [python.org](https://python.org) or use Anaconda
+2. **Clone/Copy**: Copy the `yuetransfer` folder to your machine
+3. **Install Dependencies**: `pip install -r requirements.txt`
+4. **Start Server**: Double-click `start_server.bat` or run `python start_server_step3_google_fixed.py`
+
+##### **Mac/Linux:**
+1. **Install Python**: Usually pre-installed, or use package manager
+2. **Clone/Copy**: Copy the `yuetransfer` folder to your machine
+3. **Make Scripts Executable**: `chmod +x *.sh`
+4. **Install Dependencies**: `./install_dependencies.sh`
+5. **Start Server**: `./start_server.sh`
+
+##### **Universal Method:**
+```bash
+# 1. Copy yuetransfer folder to any machine
+# 2. Install Python 3.8+
+# 3. Install dependencies
+pip install -r requirements.txt
+
+# 4. Start server
+python start_server_step3_google_fixed.py
+
+# 5. Access web interface
+# Open http://localhost:5000 in your browser
+```
+
+### Configure Google OAuth (Optional)
+- Follow the guide in `google_oauth_setup.md`
+- Or run: `python update_google_oauth.py`
+
+## 🔑 Login Methods
+
+### Traditional Login
+- **Admin**: pokpok / pokpok
+- **Users**: aaa/aaa, bbb/bbb, ccc/ccc
+
+### Google OAuth Login
+- Click "Sign in with Google" button
+- Requires Google OAuth credentials to be configured
+
+## ✨ Features
+
+### ✅ Implemented
+- **User Authentication**: Traditional + Google OAuth
+- **File Management**: Browse, create folders, delete, rename
+- **Bulk Operations**: Select multiple files/folders
+- **User Isolation**: Each user has their own file space
+- **Modern UI**: Responsive, Bootstrap-based interface
+- **Security**: CSRF protection, secure file paths
+- **Cross-Platform**: Works on Windows, Mac, Linux
+- **Docker Support**: Production-ready containerization
+
+### 🚧 Planned Features
+- **File Upload**: Drag-and-drop file upload
+- **TotalSegmentator Integration**: Medical image processing
+- **SFTP Server**: Large file transfer support
+- **Admin Panel**: User management and monitoring
+- **File Preview**: Image and document previews
+- **Search**: File and folder search functionality
+
+## 📁 Project Structure
 
 ```
 yuetransfer/
-├── main.py                 # Application entry point
-├── requirements.txt        # Python dependencies
-├── config/                # Configuration files
-├── app/                   # Main application
-│   ├── __init__.py        # Flask app factory
-│   ├── config.py          # Configuration management
-│   ├── sftp_server.py     # SFTP server implementation
-│   ├── models/            # Database models
-│   │   └── user.py        # User and job models
-│   ├── routes/            # Web routes
-│   │   ├── auth.py        # Authentication routes
-│   │   ├── main.py        # Main application routes
-│   │   ├── admin.py       # Admin panel routes
-│   │   └── api.py         # API endpoints
-│   ├── templates/         # HTML templates
-│   │   ├── base.html      # Base template
-│   │   ├── auth/          # Authentication templates
-│   │   ├── main/          # Main application templates
-│   │   └── admin/         # Admin panel templates
-│   ├── static/            # CSS, JS, images
-│   │   ├── css/style.css  # Custom styles
-│   │   └── js/app.js      # JavaScript functionality
-│   └── utils/             # Utility modules
-│       ├── auth.py        # Authentication utilities
-│       ├── file_manager.py # File management
-│       ├── totalsegmentator_integration.py # TotalSegmentator
-│       ├── logger.py      # Logging utilities
-│       ├── error_handlers.py # Error handling
-│       └── context_processors.py # Template context
-├── uploads/               # User file storage
-├── results/              # Processing results
-└── logs/                 # Application logs
+├── start_server_step3_google_fixed.py  # Main server application
+├── start_server.bat                    # Windows startup script
+├── start_server.sh                     # Unix/Linux/Mac startup script
+├── install_dependencies.sh             # Cross-platform dependency installer
+├── update_google_oauth.py              # Google OAuth config tool
+├── update_google_oauth.bat             # OAuth config script
+├── requirements.txt                    # Python dependencies
+├── README.md                          # This file
+├── google_oauth_setup.md              # Google OAuth setup guide
+├── GOOGLE_OAUTH_QUICK_REFERENCE.md    # Quick OAuth reference
+├── user_files/                        # User data directory
+├── Dockerfile                         # Docker container definition
+├── docker-compose.yml                 # Multi-service orchestration
+├── nginx.conf                         # Reverse proxy configuration
+├── docker-run.sh                      # Unix/Linux/Mac Docker runner
+├── docker-run.bat                     # Windows Docker runner
+├── DOCKER_README.md                   # Docker documentation
+└── .dockerignore                      # Docker build exclusions
 ```
-
-## 🚀 Installation
-
-### **Prerequisites**
-- Python 3.9+ 
-- pip package manager
-- TotalSegmentator (optional, for processing functionality)
-
-### **1. Clone/Create Directory**
-```bash
-mkdir yuetransfer
-cd yuetransfer
-```
-
-### **2. Install Dependencies**
-```bash
-pip install -r requirements.txt
-```
-
-### **3. Install TotalSegmentator (Optional)**
-```bash
-pip install TotalSegmentator
-```
-
-### **4. Initialize Application**
-```bash
-python main.py
-```
-
-The application will:
-- Create necessary directories
-- Initialize the database
-- Create default admin user (username: `admin`, password: `yuetransfer123`)
-- Start both SFTP and Web servers
 
 ## 🔧 Configuration
 
-### **Default Settings**
-- **Web Interface**: http://localhost:8080
-- **SFTP Server**: localhost:2222
-- **Admin User**: admin / yuetransfer123 (⚠️ Change immediately!)
+### Google OAuth Setup
+1. Create a project in [Google Cloud Console](https://console.cloud.google.com/)
+2. Enable Google+ API
+3. Create OAuth 2.0 credentials
+4. Add redirect URI: `http://localhost:5000/login/google/authorized`
+5. Update credentials in the server file or use the update script
 
-### **Custom Configuration**
-Create `config/config.yaml`:
-```yaml
-# Server Settings
-WEB_HOST: "0.0.0.0"
-WEB_PORT: 8080
-SFTP_HOST: "0.0.0.0"
-SFTP_PORT: 2222
+### Server Configuration
+- **Port**: 5000 (configurable in the server file)
+- **Host**: 127.0.0.1 (localhost)
+- **Debug Mode**: Enabled for development
 
-# Storage Settings
-UPLOAD_FOLDER: "./app/uploads"
-RESULTS_FOLDER: "./app/results"
-MAX_CONTENT_LENGTH: 17179869184  # 16GB
+## 🐳 Docker Deployment
 
-# Security Settings
-SECRET_KEY: "your-secret-key-here"
-SESSION_TIMEOUT: 3600
-
-# Database
-SQLALCHEMY_DATABASE_URI: "sqlite:///yuetransfer.db"
-
-# Logging
-LOG_LEVEL: "INFO"
-LOG_FILE: "./app/logs/yuetransfer.log"
-```
-
-## 📖 Usage
-
-### **Web Interface**
-
-1. **Login**: Navigate to http://localhost:8080
-2. **Dashboard**: View statistics and recent activity
-3. **Files**: Browse, upload, and manage files
-4. **Process**: Send files to TotalSegmentator
-5. **Results**: View and download processing results
-
-### **SFTP Transfer (Recommended for Large Files)**
-
-**Command Line:**
+### **Quick Docker Start:**
 ```bash
-sftp -P 2222 username@localhost
+# Windows
+docker-run.bat
+
+# Mac/Linux
+./docker-run.sh
+
+# Universal
+docker-compose up -d
 ```
 
-**Popular SFTP Clients:**
-- **Windows**: WinSCP, FileZilla
-- **Mac**: Cyberduck, FileZilla
-- **Linux**: FileZilla, command line
+### **Production with Nginx:**
+```bash
+# Windows
+docker-run.bat production
 
-### **Admin Functions**
+# Mac/Linux
+./docker-run.sh production
 
-1. **User Management**: Create, edit, delete users
-2. **Storage Monitoring**: View usage and quotas
-3. **Job Management**: Monitor processing jobs
-4. **System Status**: Check health and performance
+# Universal
+docker-compose --profile production up -d
+```
 
-## 🔐 Security
+### **Docker Features:**
+- ✅ **Production-ready** - Optimized container with security
+- ✅ **Nginx Reverse Proxy** - Rate limiting, SSL, compression
+- ✅ **Health Checks** - Automatic monitoring
+- ✅ **Volume Persistence** - User data survives container restarts
+- ✅ **Easy Scaling** - Horizontal scaling support
+- ✅ **Security Hardened** - Non-root user, minimal attack surface
 
-### **Authentication**
-- Username/password authentication
-- Session management with timeout
-- CSRF protection on forms
-
-### **User Isolation**
-- Separate storage directories per user
-- Path validation to prevent directory traversal
-- File access restricted to user's own files
-
-### **SFTP Security**
-- SSH-based file transfer
-- User-specific home directories
-- No shell access (SFTP only)
-
-## 📊 TotalSegmentator Integration
-
-### **Supported Tasks**
-- `total`: Complete segmentation (117 classes)
-- `total_mr`: MR image segmentation
-- `lung_vessels`: Lung vessel segmentation
-- `cerebral_bleed`: Cerebral bleeding detection
-- `hip_implant`: Hip implant detection
-- And more...
-
-### **Processing Workflow**
-1. Upload DICOM or NIfTI files via SFTP or web
-2. Select files for processing
-3. Choose segmentation task and options
-4. Submit job for background processing
-5. Monitor progress and view results
-
-### **Job Management**
-- Real-time progress tracking
-- Job cancellation
-- Result download
-- Processing history
-
-## 🔍 File Management
-
-### **Supported Formats**
-- **Medical**: DICOM (.dcm), NIfTI (.nii, .nii.gz)
-- **Archives**: ZIP, TAR, 7Z
-- **Images**: JPEG, PNG, TIFF, BMP
-- **Documents**: PDF, TXT, CSV
-
-### **File Operations**
-- Upload (web + SFTP)
-- Download
-- Delete
-- Rename
-- Move
-- Create folders
-- Bulk operations
-
-### **Storage Features**
-- User quotas
-- Usage tracking
-- File type organization
-- Search and filtering
+**📖 For detailed Docker documentation, see: `DOCKER_README.md`**
 
 ## 🛠️ Development
 
-### **Running in Development Mode**
-```bash
-python main.py --dev
-```
+### Adding New Features
+1. Edit `start_server_step3_google_fixed.py`
+2. Add new routes and functionality
+3. Update templates as needed
+4. Test thoroughly before deployment
 
-### **Key Components**
-- **Flask**: Web framework
-- **Paramiko**: SFTP server implementation
-- **SQLAlchemy**: Database ORM
-- **Bootstrap**: UI framework
-- **Threading**: Background job processing
+### File Structure
+- **Templates**: HTML templates are embedded in the Python file
+- **Static Files**: CSS/JS are loaded from CDN
+- **User Data**: Stored in `user_files/` directory
 
-### **Database Models**
-- **User**: Authentication and storage management
-- **ProcessingJob**: TotalSegmentator job tracking
+## 🔒 Security Features
 
-## 📝 Command Line Options
+- **User Authentication**: Flask-Login integration
+- **Session Management**: Secure session handling
+- **File Path Security**: Prevents directory traversal attacks
+- **CSRF Protection**: Cross-site request forgery protection
+- **User Isolation**: Users can only access their own files
+- **Docker Security**: Non-root user, isolated networks, security headers
 
-```bash
-python main.py [OPTIONS]
+## 📝 Usage
 
-Options:
-  --dev                 Run in development mode
-  --production         Run in production mode  
-  --port PORT          Web server port (default: 8080)
-  --sftp-port PORT     SFTP server port (default: 2222)
-  --host HOST          Host to bind to (default: 0.0.0.0)
-  --config CONFIG      Configuration file path
-```
+1. **Login**: Use traditional credentials or Google OAuth
+2. **Browse Files**: Navigate through your file structure
+3. **Create Folders**: Use the "New Folder" button
+4. **Manage Files**: Select files for bulk operations
+5. **Delete/Rename**: Use the action buttons for each file
 
-## 🚨 Important Notes
+## 🌍 Cross-Platform Support
 
-### **First Login**
-1. Access http://localhost:8080
-2. Login with `admin` / `yuetransfer123`
-3. **Immediately change the password**
-4. Create additional users as needed
+### **Windows:**
+- ✅ **Fully Supported** - Native Python and batch scripts
+- ✅ **Easy Installation** - Python from python.org or Anaconda
+- ✅ **Batch Scripts** - `start_server.bat` works perfectly
+- ✅ **Docker Support** - `docker-run.bat` for containerized deployment
 
-### **Large File Handling**
-- Use SFTP for files > 1GB
-- Web upload suitable for smaller files
-- Browser limitations: ~2-4GB depending on browser/system
+### **Mac:**
+- ✅ **Fully Supported** - Python comes pre-installed
+- ✅ **Shell Scripts** - `start_server.sh` and `install_dependencies.sh`
+- ✅ **Terminal Commands** - Same Python commands work
+- ✅ **Docker Support** - `docker-run.sh` for containerized deployment
 
-### **TotalSegmentator Requirements**
-- GPU recommended for fast processing
-- CUDA support for GPU acceleration
-- Sufficient disk space for results
+### **Linux:**
+- ✅ **Fully Supported** - Python usually pre-installed
+- ✅ **Package Manager** - `apt`, `yum`, or `pip` for dependencies
+- ✅ **Shell Scripts** - `start_server.sh` and `install_dependencies.sh`
+- ✅ **Docker Support** - `docker-run.sh` for containerized deployment
 
-### **Production Deployment**
-- Change default admin password
-- Use HTTPS (configure reverse proxy)
-- Set up proper firewall rules
-- Configure backup procedures
-- Monitor disk space and performance
+## 🐛 Troubleshooting
 
-## 🔧 Troubleshooting
+### Common Issues
+- **"ModuleNotFoundError"**: Install dependencies with `pip install -r requirements.txt`
+- **Google OAuth errors**: Check credentials and redirect URI
+- **Port already in use**: Change port in server file or kill existing process
+- **Permission denied (Mac/Linux)**: Run `chmod +x *.sh` to make scripts executable
+- **Docker issues**: Check `DOCKER_README.md` for detailed troubleshooting
 
-### **Common Issues**
+### Getting Help
+- Check the Google OAuth setup guide
+- Review server logs for error messages
+- Ensure all dependencies are installed
+- Verify Python version (3.8+ required)
+- For Docker issues, see `DOCKER_README.md`
 
-**SFTP Connection Failed:**
-```bash
-# Check if server is running
-netstat -an | grep 2222
+## 📄 License
 
-# Test connection
-sftp -P 2222 admin@localhost
-```
+This project is part of the TotalSegmentator workflow system.
 
-**TotalSegmentator Not Found:**
-```bash
-# Install TotalSegmentator
-pip install TotalSegmentator
+## 🤝 Contributing
 
-# Verify installation
-TotalSegmentator --help
-```
-
-**Permission Errors:**
-- Ensure write permissions on upload/results directories
-- Check user isolation settings
-- Verify file ownership
-
-**Database Issues:**
-```bash
-# Reset database (⚠️ Deletes all data)
-rm yuetransfer.db
-python main.py  # Will recreate database
-```
-
-## 📞 Support
-
-### **Getting Help**
-- Check logs in `app/logs/yuetransfer.log`
-- Review configuration settings
-- Verify TotalSegmentator installation
-- Check system resources (disk space, memory)
-
-### **Contact**
-- **Default Admin Email**: admin@yuetransfer.local
-- **Documentation**: This README file
-- **Issues**: Check application logs for details
-
-## 🎉 Success!
-
-You now have a complete medical imaging transfer and processing platform! The application provides:
-
-✅ **Secure SFTP server** for large file transfers  
-✅ **Modern web interface** for file management  
-✅ **TotalSegmentator integration** for medical image processing  
-✅ **Multi-user support** with storage quotas  
-✅ **Admin panel** for system management  
-✅ **Professional-grade security** and isolation  
-
-**Ready to handle gigabyte-sized medical imaging datasets with ease!** 🏥🧠
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test thoroughly
+5. Submit a pull request
 
 ---
 
-**YueTransfer** - Professional medical imaging transfer and processing platform. 
+**YueTransfer** - Secure, modern file management for medical imaging workflows. 
