@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ app_name }} - Upload Files</title>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <!-- Custom CSS -->
+    <link href="{{ url_for('static', filename='css/upload.css') }}" rel="stylesheet">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <i class="fas fa-cloud-upload-alt me-2"></i>
+                {{ app_name }}
+            </a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link active" href="/upload">
+                    <i class="fas fa-upload me-1"></i>
+                    Upload Files
+                </a>
+                <a class="nav-link" href="/">
+                    <i class="fas fa-home me-1"></i>
+                    Home
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="container mt-4">
+        <!-- Upload Zone -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        <h4 class="mb-0">
+                            <i class="fas fa-cloud-upload-alt me-2"></i>
+                            Upload DICOM Files & Folders
+                        </h4>
+                    </div>
+                    <div class="card-body">
+                        <!-- Drag & Drop Zone -->
+                        <div id="upload-zone" class="upload-zone">
+                            <div class="upload-zone-content">
+                                <i class="fas fa-cloud-upload-alt fa-4x text-primary mb-3"></i>
+                                <h4>Drag & Drop Files or Folders Here</h4>
+                                <p class="text-muted">or click to browse files and folders</p>
+                                <p class="text-muted small">
+                                    Supports: DICOM (.dcm, .dicom), NIfTI (.nii, .nii.gz)<br>
+                                    Max file size: {{ max_file_size }}GB | Folder uploads supported
+                                </p>
+                                <input type="file" id="file-input" multiple accept=".dcm,.dicom,.nii,.nii.gz" style="display: none;">
+                                <input type="file" id="folder-input" webkitdirectory directory multiple style="display: none;">
+                                <div class="btn-group" role="group">
+                                    <button class="btn btn-primary btn-lg" onclick="document.getElementById('file-input').click()">
+                                        <i class="fas fa-folder-open me-2"></i>
+                                        Browse Files
+                                    </button>
+                                    <button class="btn btn-outline-primary btn-lg" onclick="document.getElementById('folder-input').click()">
+                                        <i class="fas fa-folder-tree me-2"></i>
+                                        Browse Folders
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Upload Progress -->
+                        <div id="upload-progress" class="mt-4" style="display: none;">
+                            <h5>Upload Progress</h5>
+                            <div class="progress mb-3">
+                                <div id="progress-bar" class="progress-bar" role="progressbar" style="width: 0%"></div>
+                            </div>
+                            <div id="progress-text" class="text-muted">Preparing upload...</div>
+                        </div>
+
+                        <!-- File List -->
+                        <div id="file-list" class="mt-4" style="display: none;">
+                            <h5>Uploaded Files</h5>
+                            <div id="files-container" class="row">
+                                <!-- Files will be added here dynamically -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Upload Options -->
+        <div class="row mt-4">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-cog me-2"></i>
+                            Upload Options
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="auto-organize" checked>
+                            <label class="form-check-label" for="auto-organize">
+                                Auto-organize files by project/patient/study
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="generate-previews" checked>
+                            <label class="form-check-label" for="generate-previews">
+                                Generate DICOM previews (256x256)
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="extract-metadata" checked>
+                            <label class="form-check-label" for="extract-metadata">
+                                Extract DICOM metadata
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="check-duplicates">
+                            <label class="form-check-label" for="check-duplicates">
+                                Check for duplicate files
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-info-circle me-2"></i>
+                            Upload Information
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-6">
+                                <div class="text-center">
+                                    <h6 class="text-muted">Total Files</h6>
+                                    <h4 id="total-files">0</h4>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="text-center">
+                                    <h6 class="text-muted">Total Size</h6>
+                                    <h4 id="total-size">0 MB</h4>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row mt-3">
+                            <div class="col-6">
+                                <div class="text-center">
+                                    <h6 class="text-muted">DICOM Files</h6>
+                                    <h4 id="dicom-files">0</h4>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="text-center">
+                                    <h6 class="text-muted">Other Files</h6>
+                                    <h4 id="other-files">0</h4>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="bg-light mt-5 py-3">
+        <div class="container text-center">
+            <p class="text-muted mb-0">
+                {{ app_name }} v{{ app_version }} - Advanced DICOM Upload System
+            </p>
+        </div>
+    </footer>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Custom JS - Load main.js first, then upload.js -->
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/upload.js') }}"></script>
+</body>
+</html>
